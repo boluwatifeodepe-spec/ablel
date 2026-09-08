@@ -47,8 +47,8 @@ class AbleApp extends ConsumerWidget {
       title: 'Able',
       debugShowCheckedModeBanner: false,
       themeMode: settings.themeMode,
+      theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      theme: AppTheme.darkTheme, // App design is deeply optimized for dark cyberpunk aesthetic
       home: const MainScaffold(),
     );
   }

@@ -3,15 +3,25 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._();
 
-  // Backgrounds
+  // Dark Backgrounds
   static const Color background = Color(0xFF0B0E14);
   static const Color surface = Color(0xFF131824);
   static const Color surfaceElevated = Color(0xFF1B2232);
   static const Color surfaceLight = Color(0xFF232B3E);
   
-  // Borders & Dividers
+  // Light Backgrounds
+  static const Color lightBackground = Color(0xFFF8FAFC);
+  static const Color lightSurface = Color(0xFFFFFFFF);
+  static const Color lightSurfaceElevated = Color(0xFFF1F5F9);
+  static const Color lightSurfaceLight = Color(0xFFE2E8F0);
+
+  // Dark Borders & Dividers
   static const Color border = Color(0xFF263043);
   static const Color borderHighlight = Color(0xFF3B4864);
+
+  // Light Borders & Dividers
+  static const Color lightBorder = Color(0xFFE2E8F0);
+  static const Color lightBorderHighlight = Color(0xFFCBD5E1);
 
   // Brand / Purple Gradient
   static const Color primaryPurple = Color(0xFF7928CA);
@@ -38,10 +48,15 @@ class AppColors {
     end: Alignment.bottomRight,
   );
 
-  // Text Colors
+  // Dark Text Colors
   static const Color textPrimary = Color(0xFFF8FAFC);
   static const Color textSecondary = Color(0xFF94A3B8);
   static const Color textMuted = Color(0xFF64748B);
+
+  // Light Text Colors
+  static const Color lightTextPrimary = Color(0xFF0F172A);
+  static const Color lightTextSecondary = Color(0xFF475569);
+  static const Color lightTextMuted = Color(0xFF94A3B8);
 
   // Status
   static const Color success = Color(0xFF10B981);
@@ -54,4 +69,13 @@ class AppColors {
   static const Color youtube = Color(0xFFFF0000);
   static const Color twitter = Color(0xFF1D9BF0);
   static const Color facebook = Color(0xFF1877F2);
+
+  // Dynamic Theme Helpers
+  static Color getBackground(bool isDark) => isDark ? background : lightBackground;
+  static Color getSurface(bool isDark) => isDark ? surface : lightSurface;
+  static Color getSurfaceElevated(bool isDark) => isDark ? surfaceElevated : lightSurfaceElevated;
+  static Color getBorder(bool isDark) => isDark ? border : lightBorder;
+  static Color getTextPrimary(bool isDark) => isDark ? textPrimary : lightTextPrimary;
+  static Color getTextSecondary(bool isDark) => isDark ? textSecondary : lightTextSecondary;
+  static Color getTextMuted(bool isDark) => isDark ? textMuted : lightTextMuted;
 }

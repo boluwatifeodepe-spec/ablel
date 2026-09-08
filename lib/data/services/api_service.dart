@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import '../../core/constants/api_endpoints.dart';
 import '../models/media_item.dart';
 
+import 'client_extractor.dart';
+
 class ApiService {
   final Dio _dio;
 
@@ -9,8 +11,8 @@ class ApiService {
       : _dio = dio ??
             Dio(
               BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(seconds: 25),
+                connectTimeout: const Duration(seconds: 8),
+                receiveTimeout: const Duration(seconds: 12),
                 headers: {
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
@@ -19,38 +21,31 @@ class ApiService {
             );
 
   /// Extract media metadata and formats from a social link
-  Future<MediaItem> extractMedia(String url) async {
+  Future<MediaItem> extractMedia(String rawUrl) async {
+    final cleanUrl = ClientExtractor.sanitizeUrl(rawUrl);
+
+    // 1. Try remote extraction backend if configured and healthy
     try {
       final response = await _dio.post(
         ApiEndpoints.extract,
-        data: {'url': url.trim()},
+        data: {'url': cleanUrl},
       );
 
       if (response.statusCode == 200 && response.data != null) {
         final data = response.data as Map<String, dynamic>;
         if (data['success'] == true) {
-          return MediaItem.fromJson(data, originalUrl: url);
-        } else {
-          throw Exception(data['error'] ?? 'Extraction failed.');
+          return MediaItem.fromJson(data, originalUrl: cleanUrl);
         }
-      } else {
-        throw Exception('Server returned status code: ${response.statusCode}');
       }
-    } on DioException catch (e) {
-      if (e.response != null && e.response?.data is Map) {
-        final errorMsg = e.response?.data['error'];
-        if (errorMsg != null) throw Exception(errorMsg);
-      }
-      if (e.type == DioExceptionType.connectionTimeout ||
-          e.type == DioExceptionType.receiveTimeout) {
-        throw Exception('Connection timed out. Please check your internet or backend server.');
-      }
-      if (e.type == DioExceptionType.connectionError) {
-        throw Exception('Could not connect to extraction backend (${ApiEndpoints.baseUrl}).');
-      }
-      throw Exception('Network error: ${e.message}');
+    } catch (_) {
+      // Backend is unavailable, offline, or threw 503; fall through to client extractor
+    }
+
+    // 2. Direct on-device extraction fallback (guaranteed offline/standalone support)
+    try {
+      return await ClientExtractor.extract(cleanUrl);
     } catch (e) {
-      throw Exception('Failed to extract media: $e');
+      throw Exception('Could not extract media. Please verify the link is valid and public.');
     }
   }
 

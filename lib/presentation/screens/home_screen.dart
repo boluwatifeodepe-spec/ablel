@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/utils/platform_utils.dart';
+import '../../data/services/client_extractor.dart';
 import '../providers/extract_provider.dart';
 import '../providers/history_provider.dart';
 import '../widgets/glass_card.dart';
@@ -36,7 +37,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
       if (clipboardData?.text != null && clipboardData!.text!.trim().isNotEmpty) {
         text = clipboardData.text!.trim();
-        _urlController.text = text;
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -47,6 +47,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
         return;
       }
+    }
+
+    // Sanitize input to get pure URL
+    final sanitized = ClientExtractor.sanitizeUrl(text);
+    if (sanitized.isNotEmpty) {
+      text = sanitized;
+      _urlController.text = text;
     }
 
     // Trigger extraction
