@@ -98,16 +98,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.surfaceElevated,
                       shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.border),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.accentCyan.withOpacity(0.3),
+                          blurRadius: 10,
+                          spreadRadius: 1,
+                        ),
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.bolt_rounded,
-                      color: AppColors.accentCyan,
-                      size: 20,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: Image.asset(
+                        'assets/images/app_logo.png',
+                        width: 36,
+                        height: 36,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   ShaderMask(

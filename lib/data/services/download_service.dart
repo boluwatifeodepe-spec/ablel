@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -13,6 +14,7 @@ typedef OnDownloadProgress = void Function(int receivedBytes, int totalBytes, do
 class DownloadService {
   final Dio _dio;
   CancelToken? _currentCancelToken;
+  static const MethodChannel _galleryChannel = MethodChannel('com.able.app/gallery');
 
   DownloadService({Dio? dio})
       : _dio = dio ??
@@ -28,7 +30,7 @@ class DownloadService {
     Directory? baseDir;
 
     if (Platform.isAndroid) {
-      // Prefer public Downloads folder on Android if accessible
+      // Prefer public Download folder on Android if accessible
       baseDir = Directory('/storage/emulated/0/Download/Able');
       try {
         if (!await baseDir.exists()) {
@@ -55,17 +57,20 @@ class DownloadService {
   /// Request necessary storage permissions
   Future<bool> requestPermissions() async {
     if (Platform.isAndroid) {
-      final storageStatus = await Permission.storage.request();
-      if (storageStatus.isGranted) return true;
+      try {
+        final storageStatus = await Permission.storage.request();
+        if (storageStatus.isGranted) return true;
 
-      final videosStatus = await Permission.videos.request();
-      final audioStatus = await Permission.audio.request();
-      return videosStatus.isGranted || audioStatus.isGranted;
+        final photosStatus = await Permission.photos.request();
+        final videosStatus = await Permission.videos.request();
+        final audioStatus = await Permission.audio.request();
+        return photosStatus.isGranted || videosStatus.isGranted || audioStatus.isGranted;
+      } catch (_) {}
     }
     return true;
   }
 
-  /// Download media format to disk with live progress
+  /// Download media format to disk with live progress and save to Phone Gallery
   Future<DownloadRecord> downloadMedia({
     required MediaItem item,
     required MediaFormat format,
@@ -102,6 +107,20 @@ class DownloadService {
       final file = File(targetFilePath);
       final finalSize = await file.length();
 
+      // Trigger native Gallery & MediaStore indexing so it appears in Phone Gallery app
+      if (Platform.isAndroid) {
+        try {
+          await _galleryChannel.invokeMethod('saveToGallery', {
+            'path': targetFilePath,
+            'isVideo': format.isVideo,
+          });
+        } catch (_) {
+          try {
+            await _galleryChannel.invokeMethod('scanFile', {'path': targetFilePath});
+          } catch (_) {}
+        }
+      }
+
       return DownloadRecord(
         id: const Uuid().v4(),
         title: item.title,
@@ -116,7 +135,7 @@ class DownloadService {
         originalUrl: item.originalUrl,
       );
     } catch (e) {
-      if (CancelToken.isCancel(e as DioException)) {
+      if (e is DioException && CancelToken.isCancel(e)) {
         // Clean up partial file if cancelled
         final partialFile = File(targetFilePath);
         if (await partialFile.exists()) {
