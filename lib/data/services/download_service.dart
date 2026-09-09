@@ -21,7 +21,15 @@ class DownloadService {
             Dio(
               BaseOptions(
                 connectTimeout: const Duration(seconds: 30),
-                receiveTimeout: const Duration(seconds: 120),
+                receiveTimeout: const Duration(seconds: 180),
+                headers: {
+                  'User-Agent':
+                      'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
+                  'Accept': '*/*',
+                  'Accept-Encoding': 'gzip, deflate, br',
+                },
+                followRedirects: true,
+                maxRedirects: 8,
               ),
             );
 
@@ -96,6 +104,13 @@ class DownloadService {
         format.url,
         targetFilePath,
         cancelToken: _currentCancelToken,
+        options: Options(
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
+            'Accept': '*/*',
+          },
+        ),
         onReceiveProgress: (received, total) {
           lastReceived = received;
           final effectiveTotal = total > 0 ? total : (knownTotal > 0 ? knownTotal : received);
@@ -105,7 +120,19 @@ class DownloadService {
       );
 
       final file = File(targetFilePath);
+      if (!await file.exists()) {
+        throw Exception('Download failed: file was not saved.');
+      }
+
       final finalSize = await file.length();
+      if (finalSize < 1024) {
+        // Inspect if it's an HTML error page
+        final content = await file.readAsString().catchError((_) => '');
+        if (content.toLowerCase().contains('<html') || content.toLowerCase().contains('<!doctype')) {
+          await file.delete().catchError((_) => file);
+          throw Exception('Download stream expired or protected. Please try another format or copy a fresh link.');
+        }
+      }
 
       // Trigger native Gallery & MediaStore indexing so it appears in Phone Gallery app
       if (Platform.isAndroid) {
@@ -139,7 +166,7 @@ class DownloadService {
         // Clean up partial file if cancelled
         final partialFile = File(targetFilePath);
         if (await partialFile.exists()) {
-          await partialFile.delete();
+          await partialFile.delete().catchError((_) => partialFile);
         }
         throw Exception('Download was cancelled.');
       }
