@@ -5,7 +5,7 @@ class ApiEndpoints {
   ApiEndpoints._();
 
   // Default live backend URL (can also be customized anytime in App Settings)
-  static const String _defaultProductionUrl = 'https://crazy-pianos-switch.loca.lt';
+  static const String _defaultProductionUrl = 'https://ablel.onrender.com';
   
   // Custom baseUrl override (can be changed in settings)
   static String? customBaseUrl;

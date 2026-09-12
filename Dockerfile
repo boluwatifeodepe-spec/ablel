@@ -2,11 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copy backend dependencies
+COPY backend/package*.json ./
 
+# Install production dependencies
 RUN npm install --omit=dev
 
-COPY . .
+# Copy backend source code
+COPY backend/ ./
 
 ENV PORT=10000
 ENV NODE_ENV=production
