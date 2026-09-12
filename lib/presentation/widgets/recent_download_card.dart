@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/utils/formatters.dart';
 import '../../data/models/download_record.dart';
 
 class RecentDownloadCard extends StatelessWidget {
@@ -102,7 +103,7 @@ class RecentDownloadCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      record.title,
+                      Formatters.decodeHtmlEntities(record.title),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -143,18 +144,42 @@ class RecentDownloadCard extends StatelessWidget {
   }
 
   Widget _buildThumbnail() {
-    if (record.thumbnail != null && record.thumbnail!.isNotEmpty) {
-      if (record.thumbnail!.startsWith('http')) {
+    final thumb = record.thumbnail;
+    if (thumb != null && thumb.isNotEmpty) {
+      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
         return CachedNetworkImage(
-          imageUrl: record.thumbnail!,
+          imageUrl: thumb,
           fit: BoxFit.cover,
           placeholder: (c, u) => Container(color: AppColors.surface),
           errorWidget: (c, u, e) => _buildPlaceholder(),
         );
-      } else if (File(record.thumbnail!).existsSync()) {
-        return Image.file(File(record.thumbnail!), fit: BoxFit.cover);
+      }
+      try {
+        final file = File(thumb);
+        if (file.existsSync()) {
+          return Image.file(
+            file,
+            fit: BoxFit.cover,
+            errorBuilder: (c, e, s) => _buildPlaceholder(),
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (record.originalUrl != null && record.originalUrl!.isNotEmpty) {
+      final ytIdMatch = RegExp(
+              r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|live\/|watch\?.+&v=))([\w-]{11})')
+          .firstMatch(record.originalUrl!);
+      if (ytIdMatch != null) {
+        return CachedNetworkImage(
+          imageUrl: 'https://i.ytimg.com/vi/${ytIdMatch.group(1)}/hqdefault.jpg',
+          fit: BoxFit.cover,
+          placeholder: (c, u) => Container(color: AppColors.surface),
+          errorWidget: (c, u, e) => _buildPlaceholder(),
+        );
       }
     }
+
     return _buildPlaceholder();
   }
 

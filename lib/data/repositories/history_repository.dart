@@ -58,7 +58,20 @@ class HistoryRepository {
 
   /// Add a new download record
   Future<void> addRecord(DownloadRecord record) async {
-    await box.put(record.id, record);
+    // Avoid duplicate entries for the same original URL
+    dynamic existingKey;
+    for (final key in box.keys) {
+      final existing = box.get(key);
+      if (existing != null && existing.originalUrl == record.originalUrl) {
+        existingKey = key;
+        break;
+      }
+    }
+    if (existingKey != null) {
+      await box.put(existingKey, record);
+    } else {
+      await box.put(record.id, record);
+    }
   }
 
   /// Delete a record and optionally its file from disk

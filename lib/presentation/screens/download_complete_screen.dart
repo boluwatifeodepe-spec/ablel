@@ -119,7 +119,7 @@ class DownloadCompleteScreen extends ConsumerWidget {
 
                     // File name / title
                     Text(
-                      record.title,
+                      Formatters.decodeHtmlEntities(record.title),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -226,15 +226,23 @@ class DownloadCompleteScreen extends ConsumerWidget {
 
   Widget _buildThumbnail() {
     if (record.thumbnail != null && record.thumbnail!.isNotEmpty) {
-      if (record.thumbnail!.startsWith('http')) {
+      if (File(record.thumbnail!).existsSync()) {
+        return Image.file(
+          File(record.thumbnail!),
+          fit: BoxFit.cover,
+          errorBuilder: (c, e, s) => _buildPlaceholder(),
+        );
+      } else if (record.thumbnail!.startsWith('http')) {
         return CachedNetworkImage(
           imageUrl: record.thumbnail!,
           fit: BoxFit.cover,
+          httpHeaders: const {
+            'User-Agent':
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+          },
           placeholder: (c, u) => Container(color: AppColors.surfaceLight),
           errorWidget: (c, u, e) => _buildPlaceholder(),
         );
-      } else if (File(record.thumbnail!).existsSync()) {
-        return Image.file(File(record.thumbnail!), fit: BoxFit.cover);
       }
     }
     return _buildPlaceholder();

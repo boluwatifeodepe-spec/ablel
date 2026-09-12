@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/constants/app_colors.dart';
@@ -10,6 +11,7 @@ import '../../data/models/download_record.dart';
 class LibraryItemCard extends StatelessWidget {
   final DownloadRecord record;
   final VoidCallback? onDelete;
+  static const MethodChannel _galleryChannel = MethodChannel('com.able.app/gallery');
 
   const LibraryItemCard({
     super.key,
@@ -111,7 +113,7 @@ class LibraryItemCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      record.title,
+                      Formatters.decodeHtmlEntities(record.title),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -153,18 +155,42 @@ class LibraryItemCard extends StatelessWidget {
   }
 
   Widget _buildThumbnail() {
-    if (record.thumbnail != null && record.thumbnail!.isNotEmpty) {
-      if (record.thumbnail!.startsWith('http')) {
+    final thumb = record.thumbnail;
+    if (thumb != null && thumb.isNotEmpty) {
+      if (thumb.startsWith('http://') || thumb.startsWith('https://')) {
         return CachedNetworkImage(
-          imageUrl: record.thumbnail!,
+          imageUrl: thumb,
           fit: BoxFit.cover,
           placeholder: (c, u) => Container(color: AppColors.surfaceLight),
           errorWidget: (c, u, e) => _buildPlaceholder(),
         );
-      } else if (File(record.thumbnail!).existsSync()) {
-        return Image.file(File(record.thumbnail!), fit: BoxFit.cover);
+      }
+      try {
+        final file = File(thumb);
+        if (file.existsSync()) {
+          return Image.file(
+            file,
+            fit: BoxFit.cover,
+            errorBuilder: (c, e, s) => _buildPlaceholder(),
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (record.originalUrl != null && record.originalUrl!.isNotEmpty) {
+      final ytIdMatch = RegExp(
+              r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|live\/|watch\?.+&v=))([\w-]{11})')
+          .firstMatch(record.originalUrl!);
+      if (ytIdMatch != null) {
+        return CachedNetworkImage(
+          imageUrl: 'https://i.ytimg.com/vi/${ytIdMatch.group(1)}/hqdefault.jpg',
+          fit: BoxFit.cover,
+          placeholder: (c, u) => Container(color: AppColors.surfaceLight),
+          errorWidget: (c, u, e) => _buildPlaceholder(),
+        );
       }
     }
+
     return _buildPlaceholder();
   }
 
@@ -210,6 +236,21 @@ class LibraryItemCard extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(ctx);
                     OpenFilex.open(record.filePath);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined, color: AppColors.accentCyan),
+                  title: const Text('Open in Gallery', style: TextStyle(color: AppColors.textPrimary)),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    try {
+                      await _galleryChannel.invokeMethod('openInGallery', {
+                        'path': record.filePath,
+                        'isVideo': !record.isAudio,
+                      });
+                    } catch (_) {
+                      OpenFilex.open(record.filePath);
+                    }
                   },
                 ),
                 ListTile(

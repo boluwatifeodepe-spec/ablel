@@ -1,17 +1,15 @@
 package com.able.app.able_app
 
-import android.content.ContentValues
+import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.able.app/gallery"
@@ -20,63 +18,72 @@ class MainActivity: FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "scanFile" -> {
+                "scanFile", "saveToGallery" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        MediaScannerConnection.scanFile(
-                            context,
-                            arrayOf(path),
-                            null
-                        ) { scannedPath, uri -> }
-                        result.success(true)
+                        try {
+                            val file = File(path)
+                            if (file.exists()) {
+                                // Scan the single downloaded file so it appears immediately in the Gallery without creating duplicates
+                                MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(file.absolutePath),
+                                    null
+                                ) { scannedPath, uri -> }
+                                result.success(true)
+                            } else {
+                                result.success(false)
+                            }
+                        } catch (e: Exception) {
+                            result.error("SCAN_ERROR", e.message, null)
+                        }
                     } else {
                         result.error("INVALID_PATH", "Path cannot be null", null)
                     }
                 }
-                "saveToGallery" -> {
+                "openInGallery" -> {
                     val path = call.argument<String>("path")
                     val isVideo = call.argument<Boolean>("isVideo") ?: true
-                    if (path != null) {
-                        try {
-                            val sourceFile = File(path)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val values = ContentValues().apply {
-                                    put(MediaStore.MediaColumns.DISPLAY_NAME, sourceFile.name)
-                                    put(MediaStore.MediaColumns.MIME_TYPE, if (isVideo) "video/mp4" else "image/jpeg")
-                                    put(MediaStore.MediaColumns.RELATIVE_PATH, if (isVideo) "${Environment.DIRECTORY_MOVIES}/Able" else "${Environment.DIRECTORY_PICTURES}/Able")
-                                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                                }
-                                val collection = if (isVideo) {
-                                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                                } else {
-                                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                                }
-                                val itemUri = contentResolver.insert(collection, values)
-                                if (itemUri != null) {
-                                    contentResolver.openOutputStream(itemUri)?.use { out ->
-                                        FileInputStream(sourceFile).use { input ->
-                                            input.copyTo(out)
-                                        }
+                    try {
+                        var launched = false
+                        if (path != null) {
+                            val file = File(path)
+                            if (file.exists()) {
+                                try {
+                                    // Try opening file via FileProvider or file URI
+                                    val uri = Uri.fromFile(file)
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, if (isVideo) "video/*" else "image/*")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     }
-                                    values.clear()
-                                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                                    contentResolver.update(itemUri, values, null, null)
-                                }
-                            } else {
-                                val targetDir = File(Environment.getExternalStoragePublicDirectory(if (isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES), "Able")
-                                if (!targetDir.exists()) targetDir.mkdirs()
-                                val targetFile = File(targetDir, sourceFile.name)
-                                sourceFile.copyTo(targetFile, overwrite = true)
-                                MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
+                                    context.startActivity(intent)
+                                    launched = true
+                                } catch (_: Exception) {}
                             }
-                            MediaScannerConnection.scanFile(context, arrayOf(path), null, null)
-                            result.success(true)
-                        } catch (e: Exception) {
-                            MediaScannerConnection.scanFile(context, arrayOf(path), null, null)
-                            result.success(true)
                         }
-                    } else {
-                        result.error("INVALID_PATH", "Path is null", null)
+
+                        if (!launched) {
+                            // Launch the phone's default Gallery / Photos application
+                            val galleryIntent = Intent(Intent.ACTION_VIEW).apply {
+                                type = if (isVideo) "video/*" else "image/*"
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(galleryIntent)
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        try {
+                            // Fallback to gallery intent category
+                            val appGalleryIntent = Intent(Intent.ACTION_MAIN).apply {
+                                addCategory(Intent.CATEGORY_APP_GALLERY)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(appGalleryIntent)
+                            result.success(true)
+                        } catch (e2: Exception) {
+                            result.error("LAUNCH_FAILED", e2.message, null)
+                        }
                     }
                 }
                 else -> result.notImplemented()

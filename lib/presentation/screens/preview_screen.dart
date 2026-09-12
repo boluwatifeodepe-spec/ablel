@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/utils/formatters.dart';
 import '../providers/download_provider.dart';
 import '../providers/extract_provider.dart';
 import '../widgets/glass_card.dart';
@@ -70,6 +71,10 @@ class PreviewScreen extends ConsumerWidget {
                                 ? CachedNetworkImage(
                                     imageUrl: item.thumbnail,
                                     fit: BoxFit.cover,
+                                    httpHeaders: const {
+                                      'User-Agent':
+                                          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+                                    },
                                     placeholder: (c, u) => Container(
                                       color: AppColors.surfaceElevated,
                                       child: const Center(
@@ -140,7 +145,7 @@ class PreviewScreen extends ConsumerWidget {
 
                     // Media Title
                     Text(
-                      item.title,
+                      Formatters.decodeHtmlEntities(item.title),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -161,7 +166,7 @@ class PreviewScreen extends ConsumerWidget {
                           const SizedBox(width: 6),
                         ],
                         Text(
-                          item.author.name,
+                          Formatters.decodeHtmlEntities(item.author.name),
                           style: const TextStyle(
                             fontSize: 13,
                             color: AppColors.textSecondary,
@@ -228,7 +233,6 @@ class PreviewScreen extends ConsumerWidget {
               // Primary Action: Download Video (No Watermark)
               GradientButton(
                 onPressed: () {
-                  // Start download and push DownloadingScreen
                   ref.read(downloadProvider.notifier).startDownload(
                     item: item,
                     format: selectedFormat,

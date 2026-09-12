@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
+import '../../core/utils/formatters.dart';
 import '../models/download_record.dart';
 import '../models/media_format.dart';
 import '../models/media_item.dart';
@@ -38,7 +39,7 @@ class DownloadService {
     Directory? baseDir;
 
     if (Platform.isAndroid) {
-      // Prefer public Download folder on Android if accessible
+      // Use public Download folder on Android so files are directly visible in Files / Gallery
       baseDir = Directory('/storage/emulated/0/Download/Able');
       try {
         if (!await baseDir.exists()) {
@@ -46,7 +47,6 @@ class DownloadService {
         }
         return baseDir;
       } catch (_) {
-        // Fallback to external files or app documents
         baseDir = await getExternalStorageDirectory();
       }
     } else if (Platform.isIOS) {
@@ -78,7 +78,7 @@ class DownloadService {
     return true;
   }
 
-  /// Download media format to disk with live progress and save to Phone Gallery
+  /// Download media format to disk with live progress and save thumbnail locally for offline cover display
   Future<DownloadRecord> downloadMedia({
     required MediaItem item,
     required MediaFormat format,
@@ -88,11 +88,12 @@ class DownloadService {
 
     // Prepare target directory & filename
     final directory = await getDownloadDirectory();
-    final sanitizedTitle = item.title
+    final cleanTitle = Formatters.decodeHtmlEntities(item.title)
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         .trim()
         .take(40);
-    final filename = '${sanitizedTitle}_${DateTime.now().millisecondsSinceEpoch}.${format.ext}';
+    final recordId = const Uuid().v4();
+    final filename = '${cleanTitle}_${DateTime.now().millisecondsSinceEpoch}.${format.ext}';
     final targetFilePath = p.join(directory.path, filename);
 
     // Track download progress
@@ -126,7 +127,7 @@ class DownloadService {
 
       final finalSize = await file.length();
       if (finalSize < 1024) {
-        // Inspect if it's an HTML error page
+        // Check if it's an HTML error page
         final content = await file.readAsString().catchError((_) => '');
         if (content.toLowerCase().contains('<html') || content.toLowerCase().contains('<!doctype')) {
           await file.delete().catchError((_) => file);
@@ -134,25 +135,50 @@ class DownloadService {
         }
       }
 
-      // Trigger native Gallery & MediaStore indexing so it appears in Phone Gallery app
-      if (Platform.isAndroid) {
+      // Download and cache thumbnail locally so video cover ALWAYS renders in Library & Recent Downloads
+      String localThumbnailPath = item.thumbnail;
+      if (item.thumbnail.isNotEmpty && item.thumbnail.startsWith('http')) {
         try {
-          await _galleryChannel.invokeMethod('saveToGallery', {
-            'path': targetFilePath,
-            'isVideo': format.isVideo,
-          });
+          final appDocDir = await getApplicationDocumentsDirectory();
+          final thumbsDir = Directory(p.join(appDocDir.path, 'thumbs'));
+          if (!await thumbsDir.exists()) {
+            await thumbsDir.create(recursive: true);
+          }
+          final thumbFile = File(p.join(thumbsDir.path, '${recordId}_thumb.jpg'));
+          await _dio.download(
+            item.thumbnail,
+            thumbFile.path,
+            options: Options(
+              headers: {
+                'User-Agent':
+                    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+              },
+              receiveTimeout: const Duration(seconds: 6),
+            ),
+          );
+          if (await thumbFile.exists() && await thumbFile.length() > 200) {
+            localThumbnailPath = thumbFile.path;
+          }
         } catch (_) {
-          try {
-            await _galleryChannel.invokeMethod('scanFile', {'path': targetFilePath});
-          } catch (_) {}
+          // Keep remote thumbnail URL if local caching fails
         }
       }
 
+      // Notify MediaStore to index this single file (prevents duplicate gallery items)
+      if (Platform.isAndroid) {
+        try {
+          await _galleryChannel.invokeMethod('scanFile', {
+            'path': targetFilePath,
+            'isVideo': format.isVideo,
+          });
+        } catch (_) {}
+      }
+
       return DownloadRecord(
-        id: const Uuid().v4(),
-        title: item.title,
+        id: recordId,
+        title: Formatters.decodeHtmlEntities(item.title),
         filePath: targetFilePath,
-        thumbnail: item.thumbnail,
+        thumbnail: localThumbnailPath,
         platform: item.platform.name,
         fileSize: finalSize > 0 ? finalSize : lastReceived,
         duration: item.duration,
@@ -163,7 +189,6 @@ class DownloadService {
       );
     } catch (e) {
       if (e is DioException && CancelToken.isCancel(e)) {
-        // Clean up partial file if cancelled
         final partialFile = File(targetFilePath);
         if (await partialFile.exists()) {
           await partialFile.delete().catchError((_) => partialFile);

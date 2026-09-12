@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/constants/api_endpoints.dart';
 import '../../core/constants/app_colors.dart';
 import '../providers/history_provider.dart';
 import '../providers/settings_provider.dart';
@@ -103,19 +102,6 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   Divider(color: border, height: 1),
                   ListTile(
-                    leading: const Icon(Icons.cloud_outlined, color: AppColors.accentCyan),
-                    title: Text('Backend Server URL', style: TextStyle(color: textPrimary, fontWeight: FontWeight.w600)),
-                    subtitle: Text(
-                      ApiEndpoints.baseUrl,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: textMuted, fontSize: 11),
-                    ),
-                    trailing: Icon(Icons.edit_outlined, color: textMuted, size: 18),
-                    onTap: () => _editBackendUrlDialog(context, ref, isDark),
-                  ),
-                  Divider(color: border, height: 1),
-                  ListTile(
                     leading: Icon(Icons.help_outline_rounded, color: textSecondary),
                     title: Text('Report a Problem', style: TextStyle(color: textPrimary, fontWeight: FontWeight.w600)),
                     trailing: Icon(Icons.chevron_right_rounded, color: textMuted),
@@ -172,39 +158,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  void _editBackendUrlDialog(BuildContext context, WidgetRef ref, bool isDark) {
-    final controller = TextEditingController(text: ApiEndpoints.baseUrl);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.getSurfaceElevated(isDark),
-        title: Text('Configure Backend URL', style: TextStyle(color: AppColors.getTextPrimary(isDark))),
-        content: TextField(
-          controller: controller,
-          style: TextStyle(color: AppColors.getTextPrimary(isDark), fontSize: 13),
-          decoration: const InputDecoration(
-            hintText: 'https://...',
-            labelText: 'API Base URL',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: AppColors.getTextMuted(isDark))),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryPurple),
-            onPressed: () {
-              ref.read(settingsProvider.notifier).updateBackendUrl(controller.text);
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showAboutDialog(BuildContext context, bool isDark) {
     showDialog(
       context: context,
@@ -217,11 +170,11 @@ class SettingsScreen extends ConsumerWidget {
             Text('About Able', style: TextStyle(color: AppColors.getTextPrimary(isDark))),
           ],
         ),
-        content: SingleChildScrollView(
+        content: const SingleChildScrollView(
           child: Text(
             'Able is a fast, clean media download utility for saving public content for personal and offline use.\n\n'
             'Notice: Able respects copyright and intellectual property rights. Users are reminded to use downloaded media for personal offline backup only and not to redistribute commercial content without authorization.',
-            style: TextStyle(color: AppColors.getTextSecondary(isDark)),
+            style: TextStyle(color: AppColors.textSecondary),
           ),
         ),
         actions: [
