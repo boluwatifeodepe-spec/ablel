@@ -12,7 +12,7 @@ function cleanJsonUrl(raw) {
  * @returns {Promise<Object>}
  */
 export async function extractInstagram(url) {
-  const shortcodeMatch = url.match(/(?:reel|p|tv|stories\/[^\/]+)\/([A-Za-z0-9_-]+)/);
+  const shortcodeMatch = url.match(/(?:reel|p|tv|stories\/[^\/]+|share\/[^\/]+)\/([A-Za-z0-9_-]+)/);
   const shortcode = shortcodeMatch ? shortcodeMatch[1] : null;
 
   let title = 'Instagram Reel';

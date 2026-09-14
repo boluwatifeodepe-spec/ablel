@@ -18,10 +18,30 @@ export async function extractFacebook(url) {
   let hdUrl = null;
   let sdUrl = null;
 
+  let targetUrl = url;
+  if (url.includes('/share/') || url.includes('fb.watch') || url.includes('fb.me')) {
+    try {
+      const redRes = await axios.get(url, {
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        },
+        timeout: 8000
+      });
+      if (redRes.request?.res?.responseUrl && !redRes.request.res.responseUrl.includes('/login')) {
+        targetUrl = redRes.request.res.responseUrl;
+      }
+    } catch (e) {
+      if (e.response?.headers?.location && !e.response.headers.location.includes('/login')) {
+        targetUrl = e.response.headers.location;
+      }
+    }
+  }
+
   // 1. Direct HTML parse for Facebook progressive HD/SD video MP4 URLs with full audio
   try {
     const mobileRes = await axios.get(
-      url.replace('www.facebook.com', 'm.facebook.com'),
+      targetUrl.replace('www.facebook.com', 'm.facebook.com'),
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',

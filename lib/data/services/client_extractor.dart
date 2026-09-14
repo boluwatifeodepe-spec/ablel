@@ -345,7 +345,7 @@ class ClientExtractor {
   // 3. INSTAGRAM DIRECT EXTRACTOR
   // ==========================================
   static Future<MediaItem> _extractInstagram(String url) async {
-    final shortcodeMatch = RegExp(r'(?:reel|p|tv|stories/[^/]+)/([A-Za-z0-9_-]+)').firstMatch(url);
+    final shortcodeMatch = RegExp(r'(?:reel|p|tv|stories/[^/]+|share/[^/]+)/([A-Za-z0-9_-]+)').firstMatch(url);
     final shortcode = shortcodeMatch?.group(1) ?? 'ig_${DateTime.now().millisecondsSinceEpoch}';
 
     String title = 'Instagram Reel';
@@ -575,7 +575,7 @@ class ClientExtractor {
   // 5. FACEBOOK DIRECT EXTRACTOR
   // ==========================================
   static Future<MediaItem> _extractFacebook(String url) async {
-    final idMatch = RegExp(r'(?:videos/|v=|reel/|watch/\?v=)(\d+)').firstMatch(url);
+    final idMatch = RegExp(r'(?:videos/|v=|reel/|watch/\?v=|share/[rvp]/)(\d+)').firstMatch(url);
     final fbId = idMatch?.group(1) ?? 'fb_${DateTime.now().millisecondsSinceEpoch}';
 
     String title = 'Facebook Video';
@@ -584,10 +584,31 @@ class ClientExtractor {
     String hdVideoUrl = url;
     String sdVideoUrl = url;
 
+    String targetUrl = url;
+    if (url.contains('/share/') || url.contains('fb.watch') || url.contains('fb.me')) {
+      try {
+        final redRes = await _dio.get(
+          url,
+          options: Options(
+            followRedirects: true,
+            maxRedirects: 5,
+            headers: {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            },
+          ),
+        );
+        final finalUri = redRes.realUri.toString();
+        if (finalUri.isNotEmpty && !finalUri.contains('/login')) {
+          targetUrl = finalUri;
+        }
+      } catch (_) {}
+    }
+
     // 1. HTML scrape for title, thumbnail, AND progressive HD/SD video MP4 URLs with full audio
     try {
       final res = await _dio.get(
-        url.replaceFirst('www.facebook.com', 'm.facebook.com'),
+        targetUrl.replaceFirst('www.facebook.com', 'm.facebook.com'),
         options: Options(
           headers: {
             'User-Agent':
