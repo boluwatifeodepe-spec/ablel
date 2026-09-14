@@ -100,7 +100,7 @@ export async function extractInstagram(url) {
   }
 
   if (!downloadUrl) {
-    downloadUrl = url;
+    throw new Error('Could not extract direct Instagram video stream. Please ensure the post/reel is public.');
   }
 
   return {

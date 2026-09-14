@@ -101,8 +101,12 @@ export async function extractFacebook(url) {
     }
   }
 
-  const finalHdUrl = hdUrl || sdUrl || url;
-  const finalSdUrl = sdUrl || hdUrl || url;
+  if (!hdUrl && !sdUrl) {
+    throw new Error('Could not extract direct Facebook video stream. Please ensure the video is public.');
+  }
+
+  const finalHdUrl = hdUrl || sdUrl;
+  const finalSdUrl = sdUrl || hdUrl;
 
   return {
     success: true,

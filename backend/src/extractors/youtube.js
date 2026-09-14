@@ -134,7 +134,31 @@ export async function extractYouTube(url) {
     console.warn('y2mate failed for YouTube:', e.message);
   }
 
-  // 3. Fallback: try yt1s
+  // 3. Fallback: try Invidious y.com.sb API
+  if (formats.length === 0) {
+    try {
+      const invRes = await axios.get(`https://y.com.sb/api/v1/videos/${videoId}`, { timeout: 6000 });
+      if (invRes.data && Array.isArray(invRes.data.formatStreams)) {
+        const mp4s = invRes.data.formatStreams.filter(s => s.url && s.url.includes('googlevideo'));
+        if (mp4s.length > 0) {
+          formats.push({
+            id: 'video_hd',
+            label: 'HD PRO (720p)',
+            quality: '720p',
+            type: 'video',
+            ext: 'mp4',
+            url: mp4s[0].url,
+            hasAudio: true,
+            noWatermark: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Invidious y.com.sb failed:', e.message);
+    }
+  }
+
+  // 4. Fallback: try yt1s
   if (formats.length === 0) {
     try {
       const yt1sRes = await axios.post(
@@ -179,40 +203,8 @@ export async function extractYouTube(url) {
     }
   }
 
-  // 4. Last resort: return source URL (preview will work, download won't stream)
   if (formats.length === 0) {
-    formats = [
-      {
-        id: 'video_hd',
-        label: 'HD PRO (1080p)',
-        quality: '1080p',
-        type: 'video',
-        ext: 'mp4',
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        hasAudio: true,
-        noWatermark: true
-      },
-      {
-        id: 'video_sd',
-        label: 'SD (720p)',
-        quality: '720p',
-        type: 'video',
-        ext: 'mp4',
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        hasAudio: true,
-        noWatermark: true
-      },
-      {
-        id: 'audio_mp3',
-        label: 'Audio Only (MP3)',
-        quality: '128kbps',
-        type: 'audio',
-        ext: 'mp3',
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        hasAudio: true,
-        noWatermark: true
-      }
-    ];
+    throw new Error('Could not resolve direct video stream for this YouTube video. Please ensure it is public.');
   }
 
   return {

@@ -248,24 +248,47 @@ class ClientExtractor {
       }
     } catch (_) {}
 
-    // 2. Resolve direct playable MP4 stream via Piped API
-    String streamUrl = 'https://www.youtube.com/watch?v=$videoId';
+    // 2. Resolve direct playable MP4 stream via Invidious and Piped APIs
+    String streamUrl = '';
     try {
-      final pipedRes = await _dio.get(
-        'https://api.piped.video/streams/$videoId',
-        options: Options(receiveTimeout: const Duration(seconds: 6)),
+      final invRes = await _dio.get(
+        'https://y.com.sb/api/v1/videos/$videoId',
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
       );
-      if (pipedRes.data is Map && pipedRes.data['videoStreams'] is List) {
-        final streams = (pipedRes.data['videoStreams'] as List).cast<dynamic>();
+      if (invRes.data is Map && invRes.data['formatStreams'] is List) {
+        final streams = (invRes.data['formatStreams'] as List).cast<dynamic>();
         final mp4s = streams
             .whereType<Map<String, dynamic>>()
-            .where((s) => s['format'] == 'MPEG_4' && s['url'] != null && s['videoOnly'] != true)
+            .where((s) => s['url'] != null && s['url'].toString().contains('googlevideo'))
             .toList();
         if (mp4s.isNotEmpty) {
           streamUrl = mp4s[0]['url'].toString();
         }
       }
     } catch (_) {}
+
+    if (streamUrl.isEmpty) {
+      try {
+        final pipedRes = await _dio.get(
+          'https://api.piped.video/streams/$videoId',
+          options: Options(receiveTimeout: const Duration(seconds: 5)),
+        );
+        if (pipedRes.data is Map && pipedRes.data['videoStreams'] is List) {
+          final streams = (pipedRes.data['videoStreams'] as List).cast<dynamic>();
+          final mp4s = streams
+              .whereType<Map<String, dynamic>>()
+              .where((s) => s['format'] == 'MPEG_4' && s['url'] != null && s['videoOnly'] != true)
+              .toList();
+          if (mp4s.isNotEmpty) {
+            streamUrl = mp4s[0]['url'].toString();
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (streamUrl.isEmpty) {
+      throw Exception('Could not resolve direct YouTube video stream. Please ensure the video is public.');
+    }
 
     final formats = <MediaFormat>[
       MediaFormat(
@@ -373,6 +396,10 @@ class ClientExtractor {
         thumbnail = _cleanJsonUrl(imgMatch.group(1)!);
       }
     } catch (_) {}
+
+    if (videoUrl == url || !videoUrl.startsWith('http')) {
+      throw Exception('Could not extract direct Instagram video stream. Please ensure the Reel/Post is public.');
+    }
 
     if (thumbnail.isEmpty) {
       thumbnail = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=500&auto=format&fit=crop';
@@ -600,6 +627,10 @@ class ClientExtractor {
         hdVideoUrl = sdVideoUrl;
       }
     } catch (_) {}
+
+    if (hdVideoUrl == url && sdVideoUrl == url) {
+      throw Exception('Could not extract direct Facebook video stream. Please ensure the post/video is public.');
+    }
 
     final formats = <MediaFormat>[
       MediaFormat(

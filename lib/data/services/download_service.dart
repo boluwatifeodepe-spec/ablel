@@ -120,12 +120,13 @@ class DownloadService {
       }
 
       final finalSize = await file.length();
-      if (finalSize < 1024) {
-        // Check if it's an HTML error page
-        final content = await file.readAsString().catchError((_) => '');
-        if (content.toLowerCase().contains('<html') || content.toLowerCase().contains('<!doctype')) {
+      // Inspect initial bytes to ensure we did not download an HTML webpage (e.g. 403/Expired page)
+      if (finalSize > 0) {
+        final sampleBytes = await file.openRead(0, finalSize < 8192 ? finalSize : 8192).transform(const SystemEncoding().decoder).join('').catchError((_) => '');
+        final lowerSample = sampleBytes.toLowerCase();
+        if (lowerSample.contains('<html') || lowerSample.contains('<!doctype') || lowerSample.contains('<head') || lowerSample.contains('<body')) {
           await file.delete().catchError((_) => file);
-          throw Exception('Download stream expired or protected. Please try another format or copy a fresh link.');
+          throw Exception('The direct video stream URL could not be opened or is protected. Please try another link.');
         }
       }
 

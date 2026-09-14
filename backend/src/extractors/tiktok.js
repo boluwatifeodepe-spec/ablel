@@ -134,24 +134,13 @@ export async function extractTikTok(url) {
           thumbnail: oembedRes.data.thumbnail_url || '',
           duration: '00:30',
           durationSeconds: 30,
-          formats: [
-            {
-              id: 'video_hd',
-              label: 'HD PRO',
-              quality: '1080p',
-              type: 'video',
-              ext: 'mp4',
-              url: url,
-              hasAudio: true,
-              noWatermark: true
-            }
-          ]
+          formats: []
         };
       }
     } catch (e) {
       // ignore
     }
 
-    throw new Error(`Could not extract TikTok media: ${error.message}`);
+    throw new Error('Could not extract direct TikTok video stream. Please verify the link is valid and public.');
   }
 }
