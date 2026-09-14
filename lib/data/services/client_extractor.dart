@@ -6,12 +6,12 @@ import '../../core/utils/platform_utils.dart';
 import '../models/media_format.dart';
 import '../models/media_item.dart';
 
-/// Direct on-device extraction service with ultra-fast parallel racing across multi-tier providers.
+/// Direct on-device extraction service with multi-tier stream resolution.
 class ClientExtractor {
   static final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 8),
-      receiveTimeout: const Duration(seconds: 10),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
       headers: {
         'User-Agent':
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
@@ -21,7 +21,7 @@ class ClientExtractor {
     ),
   );
 
-  /// Extract media directly from social platforms with ultra-fast parallel resolution
+  /// Extract media directly from social platforms with fast resolution
   static Future<MediaItem> extract(String rawUrl) async {
     final cleanUrl = sanitizeUrl(rawUrl);
     if (cleanUrl.isEmpty) {
@@ -220,7 +220,7 @@ class ClientExtractor {
   }
 
   // ==========================================
-  // 2. YOUTUBE DIRECT EXTRACTOR (oEmbed + Multi-Resolver)
+  // 2. YOUTUBE DIRECT EXTRACTOR
   // ==========================================
   static Future<MediaItem> _extractYouTube(String url) async {
     final idMatch = RegExp(
@@ -248,6 +248,25 @@ class ClientExtractor {
       }
     } catch (_) {}
 
+    // 2. Resolve direct playable MP4 stream via Piped API
+    String streamUrl = 'https://www.youtube.com/watch?v=$videoId';
+    try {
+      final pipedRes = await _dio.get(
+        'https://api.piped.video/streams/$videoId',
+        options: Options(receiveTimeout: const Duration(seconds: 6)),
+      );
+      if (pipedRes.data is Map && pipedRes.data['videoStreams'] is List) {
+        final streams = (pipedRes.data['videoStreams'] as List).cast<dynamic>();
+        final mp4s = streams
+            .whereType<Map<String, dynamic>>()
+            .where((s) => s['format'] == 'MPEG_4' && s['url'] != null && s['videoOnly'] != true)
+            .toList();
+        if (mp4s.isNotEmpty) {
+          streamUrl = mp4s[0]['url'].toString();
+        }
+      }
+    } catch (_) {}
+
     final formats = <MediaFormat>[
       MediaFormat(
         id: 'video_hd',
@@ -255,7 +274,7 @@ class ClientExtractor {
         quality: '1080p',
         type: 'video',
         ext: 'mp4',
-        url: 'https://www.youtube.com/watch?v=$videoId',
+        url: streamUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -265,7 +284,7 @@ class ClientExtractor {
         quality: '720p',
         type: 'video',
         ext: 'mp4',
-        url: 'https://www.youtube.com/watch?v=$videoId',
+        url: streamUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -275,7 +294,7 @@ class ClientExtractor {
         quality: '320kbps',
         type: 'audio',
         ext: 'mp3',
-        url: 'https://www.youtube.com/watch?v=$videoId',
+        url: streamUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -300,15 +319,16 @@ class ClientExtractor {
   }
 
   // ==========================================
-  // 3. INSTAGRAM DIRECT EXTRACTOR (oEmbed + Multi-Resolver)
+  // 3. INSTAGRAM DIRECT EXTRACTOR
   // ==========================================
   static Future<MediaItem> _extractInstagram(String url) async {
     final shortcodeMatch = RegExp(r'(?:reel|p|tv|stories/[^/]+)/([A-Za-z0-9_-]+)').firstMatch(url);
     final shortcode = shortcodeMatch?.group(1) ?? 'ig_${DateTime.now().millisecondsSinceEpoch}';
 
-    String title = 'Instagram Video';
+    String title = 'Instagram Reel';
     String authorName = 'Instagram Creator';
     String thumbnail = '';
+    String videoUrl = url;
 
     // 1. Fetch metadata via official Instagram oEmbed API
     try {
@@ -329,7 +349,31 @@ class ClientExtractor {
       }
     } catch (_) {}
 
-    // Fallback thumbnail if empty
+    // 2. Fetch embed HTML for unblocked cover thumbnail & video stream URL
+    try {
+      final embedRes = await _dio.get(
+        'https://www.instagram.com/p/$shortcode/embed/captioned/',
+        options: Options(
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          },
+          receiveTimeout: const Duration(seconds: 6),
+        ),
+      );
+      final html = embedRes.data.toString();
+      final videoMatch = RegExp(r'"video_url"\s*:\s*"([^"]+)"').firstMatch(html) ??
+          RegExp(r'<video[^>]+src="([^"]+)"').firstMatch(html);
+      if (videoMatch != null) {
+        videoUrl = _cleanJsonUrl(videoMatch.group(1)!);
+      }
+      final imgMatch = RegExp(r'<img[^>]+class="EmbeddedMediaImage"[^>]+src="([^"]+)"').firstMatch(html) ??
+          RegExp(r'"display_url"\s*:\s*"([^"]+)"').firstMatch(html);
+      if (imgMatch != null && thumbnail.isEmpty) {
+        thumbnail = _cleanJsonUrl(imgMatch.group(1)!);
+      }
+    } catch (_) {}
+
     if (thumbnail.isEmpty) {
       thumbnail = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=500&auto=format&fit=crop';
     }
@@ -341,7 +385,7 @@ class ClientExtractor {
         quality: '1080p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -351,7 +395,7 @@ class ClientExtractor {
         quality: '720p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -361,7 +405,7 @@ class ClientExtractor {
         quality: 'Original',
         type: 'audio',
         ext: 'mp3',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -397,8 +441,9 @@ class ClientExtractor {
     String username = '@x';
     String avatar = '';
     String thumbnail = '';
+    String videoUrl = url;
 
-    // 1. Try Twitter Syndication API
+    // 1. Fetch metadata and MP4 video streams via Twitter Syndication API
     try {
       final syndicationRes = await _dio.get(
         'https://cdn.syndication.twimg.com/tweet-result?id=$tweetId&lang=en',
@@ -407,7 +452,7 @@ class ClientExtractor {
             'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           },
-          receiveTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 6),
         ),
       );
 
@@ -423,8 +468,22 @@ class ClientExtractor {
 
         if (data['mediaDetails'] is List) {
           final mediaList = (data['mediaDetails'] as List).cast<dynamic>();
-          if (mediaList.isNotEmpty && mediaList[0] is Map) {
-            thumbnail = mediaList[0]['media_url_https']?.toString() ?? thumbnail;
+          for (final media in mediaList) {
+            if (media is Map<String, dynamic>) {
+              thumbnail = media['media_url_https']?.toString() ?? thumbnail;
+              final videoInfo = media['video_info'] as Map<String, dynamic>?;
+              if (videoInfo != null && videoInfo['variants'] is List) {
+                final variants = (videoInfo['variants'] as List).cast<dynamic>();
+                final mp4s = variants
+                    .whereType<Map<String, dynamic>>()
+                    .where((v) => v['content_type'] == 'video/mp4' && v['url'] != null)
+                    .toList();
+                mp4s.sort((a, b) => ((b['bitrate'] as int?) ?? 0).compareTo((a['bitrate'] as int?) ?? 0));
+                if (mp4s.isNotEmpty) {
+                  videoUrl = mp4s[0]['url'].toString();
+                }
+              }
+            }
           }
         }
       }
@@ -441,7 +500,7 @@ class ClientExtractor {
         quality: '1080p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -451,7 +510,7 @@ class ClientExtractor {
         quality: '720p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -461,7 +520,7 @@ class ClientExtractor {
         quality: 'Original',
         type: 'audio',
         ext: 'mp3',
-        url: url,
+        url: videoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -478,8 +537,8 @@ class ClientExtractor {
         avatar: avatar.isNotEmpty ? avatar : thumbnail,
       ),
       thumbnail: thumbnail,
-      duration: '00:30',
-      durationSeconds: 30,
+      duration: '00:45',
+      durationSeconds: 45,
       formats: formats,
       originalUrl: url,
     );
@@ -495,8 +554,10 @@ class ClientExtractor {
     String title = 'Facebook Video';
     String authorName = 'Facebook Creator';
     String thumbnail = 'https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=500&auto=format&fit=crop';
+    String hdVideoUrl = url;
+    String sdVideoUrl = url;
 
-    // 1. Try HTML scrape for og:title and og:image
+    // 1. HTML scrape for title, thumbnail, AND progressive HD/SD video MP4 URLs with full audio
     try {
       final res = await _dio.get(
         url.replaceFirst('www.facebook.com', 'm.facebook.com'),
@@ -506,7 +567,7 @@ class ClientExtractor {
                 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           },
-          receiveTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 6),
         ),
       );
 
@@ -521,6 +582,23 @@ class ClientExtractor {
       if (thumbMatch != null) {
         thumbnail = _cleanJsonUrl(thumbMatch.group(1)!);
       }
+
+      // Extract progressive video URLs with audio
+      final hdMatch = RegExp(r'"playable_url_quality_hd"\s*:\s*"([^"]+)"').firstMatch(html) ??
+          RegExp(r'"browser_native_hd_url"\s*:\s*"([^"]+)"').firstMatch(html);
+      final sdMatch = RegExp(r'"playable_url"\s*:\s*"([^"]+)"').firstMatch(html) ??
+          RegExp(r'"browser_native_sd_url"\s*:\s*"([^"]+)"').firstMatch(html) ??
+          RegExp(r'<meta property="og:video"\s+content="([^"]+)"').firstMatch(html);
+
+      if (hdMatch != null) {
+        hdVideoUrl = _cleanJsonUrl(hdMatch.group(1)!);
+      }
+      if (sdMatch != null) {
+        sdVideoUrl = _cleanJsonUrl(sdMatch.group(1)!);
+      }
+      if (hdVideoUrl == url && sdVideoUrl != url) {
+        hdVideoUrl = sdVideoUrl;
+      }
     } catch (_) {}
 
     final formats = <MediaFormat>[
@@ -530,7 +608,7 @@ class ClientExtractor {
         quality: '1080p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: hdVideoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -540,7 +618,7 @@ class ClientExtractor {
         quality: '720p',
         type: 'video',
         ext: 'mp4',
-        url: url,
+        url: sdVideoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -550,7 +628,7 @@ class ClientExtractor {
         quality: 'Original',
         type: 'audio',
         ext: 'mp3',
-        url: url,
+        url: hdVideoUrl,
         hasAudio: true,
         noWatermark: true,
       ),
@@ -577,17 +655,13 @@ class ClientExtractor {
   // ==========================================
   // HELPERS
   // ==========================================
+  static String _cleanJsonUrl(String raw) {
+    return raw.replaceAll(r'\/', '/').replaceAll(r'\u0026', '&').replaceAll('&amp;', '&');
+  }
+
   static String _formatDuration(int totalSeconds) {
     final mins = (totalSeconds ~/ 60).toString().padLeft(2, '0');
     final secs = (totalSeconds % 60).toString().padLeft(2, '0');
     return '$mins:$secs';
-  }
-
-  static String _cleanJsonUrl(String raw) {
-    return raw
-        .replaceAll(r'\/', '/')
-        .replaceAll(r'\u0025', '%')
-        .replaceAll(r'\u0026', '&')
-        .replaceAll('&amp;', '&');
   }
 }

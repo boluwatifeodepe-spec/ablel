@@ -39,23 +39,17 @@ class DownloadService {
     Directory? baseDir;
 
     if (Platform.isAndroid) {
-      // Use public Download folder on Android so files are directly visible in Files / Gallery
-      baseDir = Directory('/storage/emulated/0/Download/Able');
       try {
-        if (!await baseDir.exists()) {
-          await baseDir.create(recursive: true);
-        }
-        return baseDir;
-      } catch (_) {
         baseDir = await getExternalStorageDirectory();
-      }
+      } catch (_) {}
+      baseDir ??= await getApplicationDocumentsDirectory();
     } else if (Platform.isIOS) {
       baseDir = await getApplicationDocumentsDirectory();
     } else {
       baseDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
     }
 
-    final ableDir = Directory(p.join(baseDir?.path ?? '', 'Able'));
+    final ableDir = Directory(p.join(baseDir.path, 'Able'));
     if (!await ableDir.exists()) {
       await ableDir.create(recursive: true);
     }
@@ -152,8 +146,9 @@ class DownloadService {
               headers: {
                 'User-Agent':
                     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+                'Referer': item.thumbnail.contains('tiktok') ? 'https://www.tiktok.com/' : 'https://www.instagram.com/',
               },
-              receiveTimeout: const Duration(seconds: 6),
+              receiveTimeout: const Duration(seconds: 10),
             ),
           );
           if (await thumbFile.exists() && await thumbFile.length() > 200) {
@@ -164,12 +159,12 @@ class DownloadService {
         }
       }
 
-      // Notify MediaStore to index this single file (prevents duplicate gallery items)
+      // Export file to phone's public MediaStore / Gallery
       if (Platform.isAndroid) {
         try {
-          await _galleryChannel.invokeMethod('scanFile', {
+          await _galleryChannel.invokeMethod('saveToGallery', {
             'path': targetFilePath,
-            'isVideo': format.isVideo,
+            'isVideo': !format.isAudio,
           });
         } catch (_) {}
       }

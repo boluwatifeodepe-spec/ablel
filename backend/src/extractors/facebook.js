@@ -1,126 +1,103 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
+function cleanJsonUrl(raw) {
+  if (!raw) return '';
+  return raw.replace(/\\\/|\\/g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+}
+
 /**
  * Extract Facebook video/reels media
- * Uses: fdownloader.net scraping → savefrom.net → source URL fallback
  * @param {string} url
  * @returns {Promise<Object>}
  */
 export async function extractFacebook(url) {
   let title = 'Facebook Video';
-  let authorName = 'Facebook User';
+  let authorName = 'Facebook Creator';
   let thumbnail = '';
   let hdUrl = null;
   let sdUrl = null;
 
-  // 1. Try getfvid.com API (reliable Facebook downloader)
+  // 1. Direct HTML parse for Facebook progressive HD/SD video MP4 URLs with full audio
   try {
-    const tokenRes = await axios.get('https://getfvid.com/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout: 8000
-    });
+    const mobileRes = await axios.get(
+      url.replace('www.facebook.com', 'm.facebook.com'),
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 10000
+      }
+    );
+    const html = mobileRes.data.toString();
+    const $m = cheerio.load(html);
 
-    const $ = cheerio.load(tokenRes.data);
-    const token = $('input[name="_token"]').val() || $('input[name="token"]').val();
+    const ogTitle = $m('meta[property="og:title"]').attr('content') || $m('title').text();
+    const ogThumb = $m('meta[property="og:image"]').attr('content');
 
-    if (token) {
-      const dlRes = await axios.post(
-        'https://getfvid.com/downloader',
-        new URLSearchParams({ url, _token: token }).toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://getfvid.com/'
-          },
-          timeout: 15000
-        }
-      );
+    if (ogTitle) title = ogTitle;
+    if (ogThumb) thumbnail = cleanJsonUrl(ogThumb);
 
-      const $dl = cheerio.load(dlRes.data);
+    const hdMatch = html.match(/"playable_url_quality_hd"\s*:\s*"([^"]+)"/) ||
+                    html.match(/"browser_native_hd_url"\s*:\s*"([^"]+)"/);
+    const sdMatch = html.match(/"playable_url"\s*:\s*"([^"]+)"/) ||
+                    html.match(/"browser_native_sd_url"\s*:\s*"([^"]+)"/);
 
-      // Extract title
-      const titleEl = $dl('h2, h3, .video-title, .title').first().text().trim();
-      if (titleEl) title = titleEl;
+    if (hdMatch && hdMatch[1]) hdUrl = cleanJsonUrl(hdMatch[1]);
+    if (sdMatch && sdMatch[1]) sdUrl = cleanJsonUrl(sdMatch[1]);
+  } catch (e) {
+    console.warn('Facebook direct scrape failed:', e.message);
+  }
 
-      // Extract HD/SD links
-      $dl('a[href]').each((_, el) => {
-        const href = $dl(el).attr('href') || '';
-        const text = $dl(el).text().toLowerCase();
-        if (href.includes('.mp4') || href.includes('fbcdn') || href.includes('video')) {
-          if ((text.includes('hd') || text.includes('high')) && !hdUrl) {
-            hdUrl = href;
-          } else if (!sdUrl) {
-            sdUrl = href;
-          }
-        }
+  // 2. Try getfvid.com API fallback
+  if (!hdUrl && !sdUrl) {
+    try {
+      const tokenRes = await axios.get('https://getfvid.com/', {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: 8000
       });
 
-      // Thumbnail
-      const thumbEl = $dl('img[src*="fbcdn"], img.video-thumb, img[src*="thumb"]').first().attr('src');
-      if (thumbEl) thumbnail = thumbEl;
-    }
-  } catch (e) {
-    console.warn('getfvid failed:', e.message);
-  }
+      const $ = cheerio.load(tokenRes.data);
+      const token = $('input[name="_token"]').val() || $('input[name="token"]').val();
 
-  // 2. Try savefrom.net as fallback
-  if (!hdUrl && !sdUrl) {
-    try {
-      const sfRes = await axios.post(
-        'https://worker.sf-tools.com/savefrom.php',
-        JSON.stringify({ sf_url: url }),
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0',
-            'Origin': 'https://en.savefrom.net',
-            'Referer': 'https://en.savefrom.net/'
-          },
-          timeout: 12000
-        }
-      );
-
-      if (sfRes.data && sfRes.data.url && Array.isArray(sfRes.data.url)) {
-        for (const entry of sfRes.data.url) {
-          if (entry.url && !hdUrl) {
-            hdUrl = entry.url;
+      if (token) {
+        const dlRes = await axios.post(
+          'https://getfvid.com/downloader',
+          new URLSearchParams({ url, _token: token }).toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'User-Agent': 'Mozilla/5.0',
+              'Referer': 'https://getfvid.com/'
+            },
+            timeout: 12000
           }
-          if (entry.name) title = entry.name;
-        }
+        );
+
+        const $dl = cheerio.load(dlRes.data);
+        const titleEl = $dl('h2, h3, .video-title, .title').first().text().trim();
+        if (titleEl) title = titleEl;
+
+        $dl('a[href]').each((_, el) => {
+          const href = $dl(el).attr('href') || '';
+          const text = $dl(el).text().toLowerCase();
+          if (href.includes('.mp4') || href.includes('fbcdn') || href.includes('video')) {
+            if ((text.includes('hd') || text.includes('high')) && !hdUrl) {
+              hdUrl = href;
+            } else if (!sdUrl) {
+              sdUrl = href;
+            }
+          }
+        });
+
+        const thumbEl = $dl('img[src*="fbcdn"], img.video-thumb, img[src*="thumb"]').first().attr('src');
+        if (thumbEl && !thumbnail) thumbnail = thumbEl;
       }
     } catch (e) {
-      console.warn('savefrom fallback failed:', e.message);
-    }
-  }
-
-  // 3. Try mobile FB scrape for og:video tag
-  if (!hdUrl && !sdUrl) {
-    try {
-      const mobileRes = await axios.get(
-        url.replace('www.facebook.com', 'm.facebook.com'),
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15',
-            'Accept-Language': 'en-US,en;q=0.9'
-          },
-          timeout: 10000
-        }
-      );
-      const $m = cheerio.load(mobileRes.data);
-      const ogVideo = $m('meta[property="og:video"]').attr('content') ||
-                      $m('meta[property="og:video:url"]').attr('content');
-      const ogTitle = $m('meta[property="og:title"]').attr('content');
-      const ogThumb = $m('meta[property="og:image"]').attr('content');
-
-      if (ogVideo) hdUrl = ogVideo;
-      if (ogTitle) title = ogTitle;
-      if (ogThumb) thumbnail = ogThumb;
-    } catch (e) {
-      console.warn('FB mobile scrape failed:', e.message);
+      console.warn('getfvid failed:', e.message);
     }
   }
 
@@ -135,7 +112,7 @@ export async function extractFacebook(url) {
     author: {
       name: authorName,
       username: '@facebook',
-      avatar: ''
+      avatar: thumbnail
     },
     thumbnail: thumbnail || 'https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=500&auto=format&fit=crop',
     duration: '01:15',
@@ -153,8 +130,8 @@ export async function extractFacebook(url) {
       },
       {
         id: 'video_sd',
-        label: 'SD (480p)',
-        quality: '480p',
+        label: 'SD (720p)',
+        quality: '720p',
         type: 'video',
         ext: 'mp4',
         url: finalSdUrl,

@@ -1,17 +1,49 @@
 import axios from 'axios';
 
+function cleanJsonUrl(raw) {
+  if (!raw) return '';
+  return raw.replace(/\\\/|\\/g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+}
+
 /**
  * Extract Instagram Reel or Post video
- * Uses: Instagram oEmbed (metadata) + snapinsta API (stream URLs)
+ * Uses: Instagram Embed HTML + oEmbed + snapinsta API (stream URLs)
  * @param {string} url
  * @returns {Promise<Object>}
  */
 export async function extractInstagram(url) {
+  const shortcodeMatch = url.match(/(?:reel|p|tv|stories\/[^\/]+)\/([A-Za-z0-9_-]+)/);
+  const shortcode = shortcodeMatch ? shortcodeMatch[1] : null;
+
   let title = 'Instagram Reel';
   let authorName = 'Instagram Creator';
   let thumbnail = '';
+  let downloadUrl = null;
 
-  // 1. Metadata via oEmbed
+  // 1. Metadata via Instagram Embed HTML
+  if (shortcode) {
+    try {
+      const embedRes = await axios.get(`https://www.instagram.com/p/${shortcode}/embed/captioned/`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: 6000
+      });
+      const html = embedRes.data.toString();
+      const videoMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/) || html.match(/<video[^>]+src="([^"]+)"/);
+      if (videoMatch && videoMatch[1]) {
+        downloadUrl = cleanJsonUrl(videoMatch[1]);
+      }
+      const imgMatch = html.match(/<img[^>]+class="EmbeddedMediaImage"[^>]+src="([^"]+)"/) || html.match(/"display_url"\s*:\s*"([^"]+)"/);
+      if (imgMatch && imgMatch[1]) {
+        thumbnail = cleanJsonUrl(imgMatch[1]);
+      }
+    } catch (e) {
+      // continue
+    }
+  }
+
+  // 2. Metadata via oEmbed
   try {
     const oembedRes = await axios.get(
       `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
@@ -25,77 +57,48 @@ export async function extractInstagram(url) {
     if (oembedRes.data) {
       title = oembedRes.data.title || title;
       authorName = oembedRes.data.author_name || authorName;
-      thumbnail = oembedRes.data.thumbnail_url || thumbnail;
+      if (!thumbnail) thumbnail = oembedRes.data.thumbnail_url || thumbnail;
     }
   } catch (e) {
     // continue with defaults
   }
 
-  // 2. Try snapinsta.app API for direct MP4
-  let downloadUrl = null;
-
-  try {
-    // Step 1: get token
-    const tokenRes = await axios.get('https://snapinsta.app/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout: 8000
-    });
-
-    const tokenMatch = tokenRes.data.match(/name="_token"\s+value="([^"]+)"/);
-    if (tokenMatch && tokenMatch[1]) {
-      const token = tokenMatch[1];
-
-      // Step 2: submit URL
-      const dlRes = await axios.post(
-        'https://snapinsta.app/action.php',
-        new URLSearchParams({ url, _token: token }).toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://snapinsta.app/'
-          },
-          timeout: 12000
-        }
-      );
-
-      // Parse the response HTML for download links
-      const mp4Match = dlRes.data.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-      if (mp4Match && mp4Match[1]) {
-        downloadUrl = mp4Match[1];
-      }
-    }
-  } catch (e) {
-    console.warn('snapinsta failed:', e.message);
-  }
-
-  // 3. Try instasave.io as fallback
+  // 3. Try snapinsta.app API for direct MP4 if not resolved
   if (!downloadUrl) {
     try {
-      const saveRes = await axios.post(
-        'https://instasave.io/api/convert',
-        JSON.stringify({ url }),
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0'
-          },
-          timeout: 10000
+      const tokenRes = await axios.get('https://snapinsta.app/', {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: 8000
+      });
+
+      const tokenMatch = tokenRes.data.match(/name="_token"\s+value="([^"]+)"/);
+      if (tokenMatch && tokenMatch[1]) {
+        const token = tokenMatch[1];
+        const dlRes = await axios.post(
+          'https://snapinsta.app/action.php',
+          new URLSearchParams({ url, _token: token }).toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'User-Agent': 'Mozilla/5.0',
+              'Referer': 'https://snapinsta.app/'
+            },
+            timeout: 12000
+          }
+        );
+
+        const mp4Match = dlRes.data.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+        if (mp4Match && mp4Match[1]) {
+          downloadUrl = cleanJsonUrl(mp4Match[1]);
         }
-      );
-      if (saveRes.data && saveRes.data.url) {
-        downloadUrl = saveRes.data.url;
-      } else if (saveRes.data && saveRes.data.links && saveRes.data.links[0]) {
-        downloadUrl = saveRes.data.links[0].url || saveRes.data.links[0];
       }
     } catch (e) {
-      console.warn('instasave fallback failed:', e.message);
+      console.warn('snapinsta failed:', e.message);
     }
   }
 
-  // 4. Use source URL as last resort
   if (!downloadUrl) {
     downloadUrl = url;
   }
@@ -103,7 +106,7 @@ export async function extractInstagram(url) {
   return {
     success: true,
     platform: 'instagram',
-    id: `ig_${Date.now()}`,
+    id: shortcode || `ig_${Date.now()}`,
     title,
     author: {
       name: authorName,
