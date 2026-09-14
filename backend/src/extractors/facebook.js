@@ -38,36 +38,63 @@ export async function extractFacebook(url) {
     }
   }
 
-  // 1. Direct HTML parse for Facebook progressive HD/SD video MP4 URLs with full audio
+  // 1. Official Facebook Video Plugin Embed (Extracts direct HD and SD MP4 streams with full audio)
   try {
-    const mobileRes = await axios.get(
-      targetUrl.replace('www.facebook.com', 'm.facebook.com'),
+    const pluginRes = await axios.get(
+      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(targetUrl)}`,
       {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9'
         },
         timeout: 10000
       }
     );
-    const html = mobileRes.data.toString();
-    const $m = cheerio.load(html);
-
-    const ogTitle = $m('meta[property="og:title"]').attr('content') || $m('title').text();
-    const ogThumb = $m('meta[property="og:image"]').attr('content');
-
-    if (ogTitle) title = ogTitle;
-    if (ogThumb) thumbnail = cleanJsonUrl(ogThumb);
-
-    const hdMatch = html.match(/"playable_url_quality_hd"\s*:\s*"([^"]+)"/) ||
-                    html.match(/"browser_native_hd_url"\s*:\s*"([^"]+)"/);
-    const sdMatch = html.match(/"playable_url"\s*:\s*"([^"]+)"/) ||
-                    html.match(/"browser_native_sd_url"\s*:\s*"([^"]+)"/);
+    const html = pluginRes.data.toString();
+    const hdMatch = html.match(/"hd_src"\s*:\s*"([^"]+)"/);
+    const sdMatch = html.match(/"sd_src"\s*:\s*"([^"]+)"/);
 
     if (hdMatch && hdMatch[1]) hdUrl = cleanJsonUrl(hdMatch[1]);
     if (sdMatch && sdMatch[1]) sdUrl = cleanJsonUrl(sdMatch[1]);
+
+    const ogThumb = html.match(/"thumbnail_src"\s*:\s*"([^"]+)"/) || html.match(/"cover_image_url"\s*:\s*"([^"]+)"/);
+    if (ogThumb && ogThumb[1]) thumbnail = cleanJsonUrl(ogThumb[1]);
   } catch (e) {
-    console.warn('Facebook direct scrape failed:', e.message);
+    console.warn('Facebook plugin embed parse failed:', e.message);
+  }
+
+  // 2. Fallback: Direct HTML parse for Facebook progressive HD/SD video MP4 URLs with full audio
+  if (!hdUrl && !sdUrl) {
+    try {
+      const mobileRes = await axios.get(
+        targetUrl.replace('www.facebook.com', 'm.facebook.com'),
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: 10000
+        }
+      );
+      const html = mobileRes.data.toString();
+      const $m = cheerio.load(html);
+
+      const ogTitle = $m('meta[property="og:title"]').attr('content') || $m('title').text();
+      const ogThumb = $m('meta[property="og:image"]').attr('content');
+
+      if (ogTitle) title = ogTitle;
+      if (ogThumb && !thumbnail) thumbnail = cleanJsonUrl(ogThumb);
+
+      const hdMatch = html.match(/"playable_url_quality_hd"\s*:\s*"([^"]+)"/) ||
+                      html.match(/"browser_native_hd_url"\s*:\s*"([^"]+)"/);
+      const sdMatch = html.match(/"playable_url"\s*:\s*"([^"]+)"/) ||
+                      html.match(/"browser_native_sd_url"\s*:\s*"([^"]+)"/);
+
+      if (hdMatch && hdMatch[1]) hdUrl = cleanJsonUrl(hdMatch[1]);
+      if (sdMatch && sdMatch[1]) sdUrl = cleanJsonUrl(sdMatch[1]);
+    } catch (e) {
+      console.warn('Facebook direct scrape failed:', e.message);
+    }
   }
 
   // 2. Try getfvid.com API fallback
