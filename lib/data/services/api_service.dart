@@ -11,14 +11,17 @@ class ApiService {
       : _dio = dio ??
             Dio(
               BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(seconds: 45),
+                connectTimeout: const Duration(seconds: 45),
+                receiveTimeout: const Duration(seconds: 60),
                 headers: {
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
                 },
               ),
-            );
+            ) {
+    // Warm up Render backend immediately in the background on app init
+    checkHealth();
+  }
 
   /// Extract media metadata and formats from a social link
   Future<MediaItem> extractMedia(String rawUrl) async {

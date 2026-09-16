@@ -132,9 +132,18 @@ export async function extractTikTok(url) {
             avatar: ''
           },
           thumbnail: oembedRes.data.thumbnail_url || '',
-          duration: '00:30',
-          durationSeconds: 30,
-          formats: []
+          formats: [
+            {
+              id: 'video_hd',
+              label: 'HD PRO (1080p)',
+              quality: '1080p',
+              type: 'video',
+              ext: 'mp4',
+              url: `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`,
+              hasAudio: true,
+              noWatermark: true
+            }
+          ]
         };
       }
     } catch (e) {

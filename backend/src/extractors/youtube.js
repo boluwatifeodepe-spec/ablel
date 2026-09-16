@@ -134,27 +134,36 @@ export async function extractYouTube(url) {
     console.warn('y2mate failed for YouTube:', e.message);
   }
 
-  // 3. Fallback: try Invidious y.com.sb API
+  // 3. Fallback: try Invidious & Piped APIs
   if (formats.length === 0) {
-    try {
-      const invRes = await axios.get(`https://y.com.sb/api/v1/videos/${videoId}`, { timeout: 6000 });
-      if (invRes.data && Array.isArray(invRes.data.formatStreams)) {
-        const mp4s = invRes.data.formatStreams.filter(s => s.url && s.url.includes('googlevideo'));
-        if (mp4s.length > 0) {
-          formats.push({
-            id: 'video_hd',
-            label: 'HD PRO (720p)',
-            quality: '720p',
-            type: 'video',
-            ext: 'mp4',
-            url: mp4s[0].url,
-            hasAudio: true,
-            noWatermark: true
-          });
+    const apiEndpoints = [
+      `https://api.piped.video/streams/${videoId}`,
+      `https://y.com.sb/api/v1/videos/${videoId}`,
+      `https://invidious.privacydev.net/api/v1/videos/${videoId}`
+    ];
+    for (const ep of apiEndpoints) {
+      try {
+        const invRes = await axios.get(ep, { timeout: 6000 });
+        if (invRes.data) {
+          const streamList = invRes.data.formatStreams || invRes.data.videoStreams || [];
+          const mp4s = streamList.filter(s => s.url && (s.url.includes('googlevideo') || s.format === 'MPEG_4'));
+          if (mp4s.length > 0) {
+            formats.push({
+              id: 'video_hd',
+              label: 'HD PRO (720p)',
+              quality: '720p',
+              type: 'video',
+              ext: 'mp4',
+              url: mp4s[0].url,
+              hasAudio: true,
+              noWatermark: true
+            });
+            break;
+          }
         }
+      } catch (e) {
+        console.warn(`API ${ep} failed:`, e.message);
       }
-    } catch (e) {
-      console.warn('Invidious y.com.sb failed:', e.message);
     }
   }
 
