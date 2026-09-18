@@ -1,18 +1,38 @@
 import axios from 'axios';
+import { ytDlpGetInfo, buildFormatsFromYtDlp } from './ytdlp.js';
 
 function cleanJsonUrl(raw) {
   if (!raw) return '';
-  return raw.replace(/\\\/|\\/g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+  return raw.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
 }
 
 /**
  * Extract Instagram Reel or Post video
- * Uses: Instagram Embed HTML + oEmbed + snapinsta API (stream URLs)
+ * Primary: Instagram Embed HTML
+ * Secondary: yt-dlp
+ * Tertiary: oEmbed metadata
  * @param {string} url
  * @returns {Promise<Object>}
  */
 export async function extractInstagram(url) {
-  const shortcodeMatch = url.match(/(?:reel|p|tv|stories\/[^\/]+|share\/[^\/]+)\/([A-Za-z0-9_-]+)/);
+  // Resolve share/redirect URLs
+  let targetUrl = url;
+  if (url.includes('/share/') || url.includes('ig.me')) {
+    try {
+      const redRes = await axios.get(url, {
+        maxRedirects: 5,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15'
+        },
+        timeout: 8000
+      });
+      if (redRes.request?.res?.responseUrl) targetUrl = redRes.request.res.responseUrl;
+    } catch (e) {
+      if (e.response?.headers?.location) targetUrl = e.response.headers.location;
+    }
+  }
+
+  const shortcodeMatch = targetUrl.match(/(?:reel|p|tv|stories\/[^/]+)\/([A-Za-z0-9_-]+)/);
   const shortcode = shortcodeMatch ? shortcodeMatch[1] : null;
 
   let title = 'Instagram Reel';
@@ -20,84 +40,85 @@ export async function extractInstagram(url) {
   let thumbnail = '';
   let downloadUrl = null;
 
-  // 1. Metadata via Instagram Embed HTML
+  // ── 1. PRIMARY: Instagram Embed HTML ──────────────────────────────────────
   if (shortcode) {
     try {
       const embedRes = await axios.get(`https://www.instagram.com/p/${shortcode}/embed/captioned/`, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Referer': 'https://www.instagram.com/'
         },
-        timeout: 6000
+        timeout: 10000
       });
       const html = embedRes.data.toString();
-      const videoMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/) || html.match(/<video[^>]+src="([^"]+)"/);
-      if (videoMatch && videoMatch[1]) {
-        downloadUrl = cleanJsonUrl(videoMatch[1]);
-      }
-      const imgMatch = html.match(/<img[^>]+class="EmbeddedMediaImage"[^>]+src="([^"]+)"/) || html.match(/"display_url"\s*:\s*"([^"]+)"/);
-      if (imgMatch && imgMatch[1]) {
-        thumbnail = cleanJsonUrl(imgMatch[1]);
-      }
-    } catch (e) {
-      // continue
-    }
-  }
 
-  // 2. Metadata via oEmbed
-  try {
-    const oembedRes = await axios.get(
-      `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
-      {
-        timeout: 6000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15'
+      const videoPatterns = [
+        /"video_url"\s*:\s*"([^"]+)"/,
+        /\\"video_url\\":\\"([^\\]+)\\"/,
+        /<video[^>]+src="([^"]+)"/i,
+        /"playable_url"\s*:\s*"([^"]+)"/,
+        /"contentUrl"\s*:\s*"([^"]+)"/,
+        /property="og:video"\s+content="([^"]+)"/
+      ];
+
+      for (const pat of videoPatterns) {
+        const m = html.match(pat);
+        if (m && m[1]) {
+          downloadUrl = cleanJsonUrl(m[1]);
+          console.log('IG embed HTML video found');
+          break;
         }
       }
-    );
-    if (oembedRes.data) {
-      title = oembedRes.data.title || title;
-      authorName = oembedRes.data.author_name || authorName;
-      if (!thumbnail) thumbnail = oembedRes.data.thumbnail_url || thumbnail;
+
+      const thumbPatterns = [
+        /<img[^>]+class="EmbeddedMediaImage"[^>]+src="([^"]+)"/,
+        /"display_url"\s*:\s*"([^"]+)"/,
+        /property="og:image"\s+content="([^"]+)"/
+      ];
+      for (const pat of thumbPatterns) {
+        const m = html.match(pat);
+        if (m && m[1]) { thumbnail = cleanJsonUrl(m[1]); break; }
+      }
+    } catch (e) {
+      console.warn('IG embed HTML failed:', e.message);
     }
-  } catch (e) {
-    // continue with defaults
   }
 
-  // 3. Try snapinsta.app API for direct MP4 if not resolved
+  // ── 2. SECONDARY: yt-dlp ──────────────────────────────────────────────────
   if (!downloadUrl) {
     try {
-      const tokenRes = await axios.get('https://snapinsta.app/', {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 8000
-      });
-
-      const tokenMatch = tokenRes.data.match(/name="_token"\s+value="([^"]+)"/);
-      if (tokenMatch && tokenMatch[1]) {
-        const token = tokenMatch[1];
-        const dlRes = await axios.post(
-          'https://snapinsta.app/action.php',
-          new URLSearchParams({ url, _token: token }).toString(),
-          {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'User-Agent': 'Mozilla/5.0',
-              'Referer': 'https://snapinsta.app/'
-            },
-            timeout: 12000
-          }
-        );
-
-        const mp4Match = dlRes.data.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-        if (mp4Match && mp4Match[1]) {
-          downloadUrl = cleanJsonUrl(mp4Match[1]);
+      const info = await ytDlpGetInfo(targetUrl);
+      if (info) {
+        title = info.title || title;
+        authorName = info.uploader || authorName;
+        thumbnail = info.thumbnail || thumbnail;
+        const formats = buildFormatsFromYtDlp(info);
+        if (formats.length > 0 && formats[0].url) {
+          downloadUrl = formats[0].url;
+          console.log('yt-dlp Instagram success');
         }
       }
     } catch (e) {
-      console.warn('snapinsta failed:', e.message);
+      console.warn('yt-dlp Instagram failed:', e.message);
     }
   }
+
+  // ── 3. TERTIARY: oEmbed metadata ──────────────────────────────────────────
+  try {
+    const oe = await axios.get(
+      `https://api.instagram.com/oembed/?url=${encodeURIComponent(targetUrl)}`,
+      {
+        timeout: 5000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15' }
+      }
+    );
+    if (oe.data) {
+      title = oe.data.title || title;
+      authorName = oe.data.author_name || authorName;
+      if (!thumbnail) thumbnail = oe.data.thumbnail_url || thumbnail;
+    }
+  } catch (e) { /* ignore */ }
 
   if (!downloadUrl) {
     throw new Error('Could not extract direct Instagram video stream. Please ensure the post/reel is public.');

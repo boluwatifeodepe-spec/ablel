@@ -1,7 +1,12 @@
 import axios from 'axios';
+import ytdl from '@distube/ytdl-core';
+import { ytDlpGetInfo, buildFormatsFromYtDlp } from './ytdlp.js';
 
 /**
- * Extract YouTube video/audio details using yt-dlp-web APIs
+ * Extract YouTube video/audio details
+ * Primary: yt-dlp (fast & reliable with --no-check-certificate)
+ * Secondary: @distube/ytdl-core
+ * Tertiary: Invidious / oEmbed metadata
  * @param {string} url
  * @returns {Promise<Object>}
  */
@@ -11,147 +16,113 @@ export async function extractYouTube(url) {
     throw new Error('YouTube downloads are temporarily disabled.');
   }
 
-  // Extract video ID
-  let videoId = '';
   const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|watch\?.+&v=))([\w-]{11})/);
-  if (match && match[1]) {
-    videoId = match[1];
-  } else {
+  if (!match || !match[1]) {
     throw new Error('Invalid YouTube URL or Video ID not found');
   }
-
-  // 1. Fetch metadata via YouTube oEmbed (always works)
+  const videoId = match[1];
+  const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
   let title = 'YouTube Video';
   let authorName = 'YouTube Creator';
-  const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-  try {
-    const oembedRes = await axios.get(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
-      { timeout: 6000 }
-    );
-    if (oembedRes.data) {
-      title = oembedRes.data.title || title;
-      authorName = oembedRes.data.author_name || authorName;
-    }
-  } catch (e) {
-    // continue with defaults
-  }
-
-  // 2. Try y2mate API for real stream URLs
   let formats = [];
 
+  // Fetch oEmbed title & author for baseline metadata
   try {
-    const analyzeRes = await axios.post(
-      'https://www.y2mate.com/mates/analyzeV2/ajax',
-      new URLSearchParams({
-        k_query: `https://www.youtube.com/watch?v=${videoId}`,
-        k_page: 'home',
-        hl: 'en',
-        q_auto: '0'
-      }).toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 10000
-      }
+    const oe = await axios.get(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(canonicalUrl)}&format=json`,
+      { timeout: 4000 }
     );
+    if (oe.data) {
+      title = oe.data.title || title;
+      authorName = oe.data.author_name || authorName;
+    }
+  } catch (e) { /* ignore */ }
 
-    if (analyzeRes.data && analyzeRes.data.status === 'ok') {
-      const links = analyzeRes.data.links || {};
-      const mp4Links = links.mp4 || {};
-      const mp3Links = links.mp3 || {};
-
-      // Pick best video quality
-      const qualityOrder = ['1080p', '720p', '480p', '360p'];
-      for (const q of qualityOrder) {
-        if (mp4Links[q] && mp4Links[q].k) {
-          try {
-            const convertRes = await axios.post(
-              'https://www.y2mate.com/mates/convertV2/index',
-              new URLSearchParams({
-                vid: videoId,
-                k: mp4Links[q].k
-              }).toString(),
-              {
-                headers: {
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                  'User-Agent': 'Mozilla/5.0'
-                },
-                timeout: 15000
-              }
-            );
-            if (convertRes.data && convertRes.data.dlink) {
-              formats.push({
-                id: 'video_hd',
-                label: `HD PRO (${q})`,
-                quality: q,
-                type: 'video',
-                ext: 'mp4',
-                url: convertRes.data.dlink,
-                hasAudio: true,
-                noWatermark: true
-              });
-              break;
-            }
-          } catch (e) { /* skip */ }
-        }
-      }
-
-      // Pick audio
-      const mp3Key = Object.keys(mp3Links)[0];
-      if (mp3Key && mp3Links[mp3Key]?.k) {
-        try {
-          const audioRes = await axios.post(
-            'https://www.y2mate.com/mates/convertV2/index',
-            new URLSearchParams({
-              vid: videoId,
-              k: mp3Links[mp3Key].k
-            }).toString(),
-            {
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              timeout: 15000
-            }
-          );
-          if (audioRes.data && audioRes.data.dlink) {
-            formats.push({
-              id: 'audio_mp3',
-              label: 'Audio Only (MP3)',
-              quality: '128kbps',
-              type: 'audio',
-              ext: 'mp3',
-              url: audioRes.data.dlink,
-              hasAudio: true,
-              noWatermark: true
-            });
-          }
-        } catch (e) { /* skip */ }
+  // ── 1. PRIMARY: yt-dlp ───────────────────────────────────────────────────
+  try {
+    const info = await ytDlpGetInfo(canonicalUrl);
+    if (info) {
+      title = info.title || title;
+      authorName = info.uploader || info.channel || authorName;
+      const parsedFormats = buildFormatsFromYtDlp(info);
+      if (parsedFormats.length > 0) {
+        formats = parsedFormats;
+        console.log(`yt-dlp YouTube success for ${videoId}`);
       }
     }
   } catch (e) {
-    console.warn('y2mate failed for YouTube:', e.message);
+    console.warn('yt-dlp YouTube failed:', e.message);
   }
 
-  // 3. Fallback: try Invidious & Piped APIs
+  // ── 2. SECONDARY: @distube/ytdl-core ─────────────────────────────────────
   if (formats.length === 0) {
-    const apiEndpoints = [
-      `https://api.piped.video/streams/${videoId}`,
-      `https://y.com.sb/api/v1/videos/${videoId}`,
-      `https://invidious.privacydev.net/api/v1/videos/${videoId}`
+    try {
+      const info = await ytdl.getInfo(canonicalUrl, {
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        }
+      });
+      title = info.videoDetails.title || title;
+      authorName = info.videoDetails.author?.name || authorName;
+
+      const videoFormats = ytdl.filterFormats(info.formats, 'videoandaudio');
+      const bestVideo = videoFormats.sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+      const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+      const bestAudio = audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
+
+      if (bestVideo) {
+        formats.push({
+          id: 'video_hd',
+          label: `HD PRO (${bestVideo.height || 720}p)`,
+          quality: `${bestVideo.height || 720}p`,
+          type: 'video',
+          ext: 'mp4',
+          url: bestVideo.url,
+          hasAudio: true,
+          noWatermark: true
+        });
+      }
+      if (bestAudio) {
+        formats.push({
+          id: 'audio_mp3',
+          label: 'Audio Only',
+          quality: `${bestAudio.audioBitrate || 128}kbps`,
+          type: 'audio',
+          ext: 'mp3',
+          url: bestAudio.url,
+          hasAudio: true,
+          noWatermark: true
+        });
+      }
+      if (formats.length > 0) console.log('ytdl-core: success');
+    } catch (e) {
+      console.warn('ytdl-core failed:', e.message);
+    }
+  }
+
+  // ── 3. TERTIARY: Invidious Instances ──────────────────────────────────────
+  if (formats.length === 0) {
+    const invInstances = [
+      'https://invidious.projectsegfau.lt',
+      'https://iv.ggtyler.dev',
+      'https://invidious.nerdvpn.de',
+      'https://inv.tux.pizza'
     ];
-    for (const ep of apiEndpoints) {
+    for (const inst of invInstances) {
       try {
-        const invRes = await axios.get(ep, { timeout: 6000 });
-        if (invRes.data) {
-          const streamList = invRes.data.formatStreams || invRes.data.videoStreams || [];
-          const mp4s = streamList.filter(s => s.url && (s.url.includes('googlevideo') || s.format === 'MPEG_4'));
+        const res = await axios.get(`${inst}/api/v1/videos/${videoId}`, { timeout: 5000 });
+        if (res.data?.formatStreams) {
+          title = res.data.title || title;
+          authorName = res.data.author || authorName;
+          const mp4s = res.data.formatStreams.filter(s => s.url);
           if (mp4s.length > 0) {
             formats.push({
               id: 'video_hd',
-              label: 'HD PRO (720p)',
-              quality: '720p',
+              label: `HD PRO (${mp4s[0].qualityLabel || '720p'})`,
+              quality: mp4s[0].qualityLabel || '720p',
               type: 'video',
               ext: 'mp4',
               url: mp4s[0].url,
@@ -161,54 +132,7 @@ export async function extractYouTube(url) {
             break;
           }
         }
-      } catch (e) {
-        console.warn(`API ${ep} failed:`, e.message);
-      }
-    }
-  }
-
-  // 4. Fallback: try yt1s
-  if (formats.length === 0) {
-    try {
-      const yt1sRes = await axios.post(
-        'https://yt1s.com/api/ajaxSearch/index',
-        new URLSearchParams({
-          q: `https://www.youtube.com/watch?v=${videoId}`,
-          vt: 'home'
-        }).toString(),
-        {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: 10000
-        }
-      );
-      if (yt1sRes.data && yt1sRes.data.status === 'ok') {
-        const links = yt1sRes.data.links?.mp4 || {};
-        const best = links['360p'] || links['480p'] || links['720p'];
-        if (best?.k) {
-          const dlRes = await axios.post(
-            'https://yt1s.com/api/ajaxConvert/convert',
-            new URLSearchParams({ vid: videoId, k: best.k }).toString(),
-            {
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              timeout: 15000
-            }
-          );
-          if (dlRes.data?.dlink) {
-            formats.push({
-              id: 'video_hd',
-              label: 'HD PRO (720p)',
-              quality: '720p',
-              type: 'video',
-              ext: 'mp4',
-              url: dlRes.data.dlink,
-              hasAudio: true,
-              noWatermark: true
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('yt1s failed:', e.message);
+      } catch (e) { /* ignore */ }
     }
   }
 

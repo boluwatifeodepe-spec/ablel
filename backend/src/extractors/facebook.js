@@ -1,13 +1,17 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { ytDlpGetInfo, buildFormatsFromYtDlp } from './ytdlp.js';
 
 function cleanJsonUrl(raw) {
   if (!raw) return '';
-  return raw.replace(/\\\/|\\/g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
+  return raw.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/&amp;/g, '&');
 }
 
 /**
  * Extract Facebook video/reels media
+ * Primary: Facebook Video Plugin Embed API (official)
+ * Secondary: yt-dlp
+ * Tertiary: Mobile/Desktop HTML Scrape
  * @param {string} url
  * @returns {Promise<Object>}
  */
@@ -18,6 +22,7 @@ export async function extractFacebook(url) {
   let hdUrl = null;
   let sdUrl = null;
 
+  // ── RESOLVE SHARE/REDIRECT URLS ───────────────────────────────────────────
   let targetUrl = url;
   if (url.includes('/share/') || url.includes('fb.watch') || url.includes('fb.me')) {
     try {
@@ -26,7 +31,7 @@ export async function extractFacebook(url) {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
-        timeout: 8000
+        timeout: 10000
       });
       if (redRes.request?.res?.responseUrl && !redRes.request.res.responseUrl.includes('/login')) {
         targetUrl = redRes.request.res.responseUrl;
@@ -38,113 +43,105 @@ export async function extractFacebook(url) {
     }
   }
 
-  // 1. Official Facebook Video Plugin Embed (Extracts direct HD and SD MP4 streams with full audio)
+  // ── 1. PRIMARY: Facebook Video Plugin Embed API ───────────────────────────
   try {
     const pluginRes = await axios.get(
-      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(targetUrl)}`,
+      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(targetUrl)}&width=640`,
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9'
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         },
         timeout: 10000
       }
     );
     const html = pluginRes.data.toString();
-    const hdMatch = html.match(/"hd_src"\s*:\s*"([^"]+)"/);
-    const sdMatch = html.match(/"sd_src"\s*:\s*"([^"]+)"/);
 
-    if (hdMatch && hdMatch[1]) hdUrl = cleanJsonUrl(hdMatch[1]);
-    if (sdMatch && sdMatch[1]) sdUrl = cleanJsonUrl(sdMatch[1]);
+    const hdPatterns = [
+      /"hd_src"\s*:\s*"([^"]+)"/,
+      /\\"hd_src\\":\s*\\"([^\\]+)\\"/,
+      /"browser_native_hd_url"\s*:\s*"([^"]+)"/
+    ];
+    const sdPatterns = [
+      /"sd_src"\s*:\s*"([^"]+)"/,
+      /\\"sd_src\\":\s*\\"([^\\]+)\\"/,
+      /"browser_native_sd_url"\s*:\s*"([^"]+)"/,
+      /"playable_url"\s*:\s*"([^"]+)"/
+    ];
 
-    const ogThumb = html.match(/"thumbnail_src"\s*:\s*"([^"]+)"/) || html.match(/"cover_image_url"\s*:\s*"([^"]+)"/);
-    if (ogThumb && ogThumb[1]) thumbnail = cleanJsonUrl(ogThumb[1]);
+    for (const pat of hdPatterns) {
+      const m = html.match(pat); if (m && m[1]) { hdUrl = cleanJsonUrl(m[1]); break; }
+    }
+    for (const pat of sdPatterns) {
+      const m = html.match(pat); if (m && m[1]) { sdUrl = cleanJsonUrl(m[1]); break; }
+    }
+
+    const thumbPat = html.match(/"thumbnail_src"\s*:\s*"([^"]+)"/) || html.match(/"cover_image_url"\s*:\s*"([^"]+)"/);
+    if (thumbPat) thumbnail = cleanJsonUrl(thumbPat[1]);
+
+    if (hdUrl || sdUrl) console.log('FB plugin embed: success');
   } catch (e) {
-    console.warn('Facebook plugin embed parse failed:', e.message);
+    console.warn('Facebook plugin embed failed:', e.message);
   }
 
-  // 2. Fallback: Direct HTML parse for Facebook progressive HD/SD video MP4 URLs with full audio
+  // ── 2. SECONDARY: yt-dlp ──────────────────────────────────────────────────
   if (!hdUrl && !sdUrl) {
     try {
-      const mobileRes = await axios.get(
-        targetUrl.replace('www.facebook.com', 'm.facebook.com'),
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
-          },
-          timeout: 10000
+      const info = await ytDlpGetInfo(targetUrl);
+      if (info) {
+        title = info.title || title;
+        authorName = info.uploader || authorName;
+        thumbnail = info.thumbnail || thumbnail;
+        const formats = buildFormatsFromYtDlp(info);
+        if (formats.length > 0 && formats[0].url) {
+          hdUrl = formats[0].url;
+          console.log('yt-dlp Facebook success');
         }
-      );
-      const html = mobileRes.data.toString();
-      const $m = cheerio.load(html);
-
-      const ogTitle = $m('meta[property="og:title"]').attr('content') || $m('title').text();
-      const ogThumb = $m('meta[property="og:image"]').attr('content');
-
-      if (ogTitle) title = ogTitle;
-      if (ogThumb && !thumbnail) thumbnail = cleanJsonUrl(ogThumb);
-
-      const hdMatch = html.match(/"playable_url_quality_hd"\s*:\s*"([^"]+)"/) ||
-                      html.match(/"browser_native_hd_url"\s*:\s*"([^"]+)"/);
-      const sdMatch = html.match(/"playable_url"\s*:\s*"([^"]+)"/) ||
-                      html.match(/"browser_native_sd_url"\s*:\s*"([^"]+)"/);
-
-      if (hdMatch && hdMatch[1]) hdUrl = cleanJsonUrl(hdMatch[1]);
-      if (sdMatch && sdMatch[1]) sdUrl = cleanJsonUrl(sdMatch[1]);
+      }
     } catch (e) {
-      console.warn('Facebook direct scrape failed:', e.message);
+      console.warn('yt-dlp Facebook failed:', e.message);
     }
   }
 
-  // 2. Try getfvid.com API fallback
+  // ── 3. TERTIARY: Mobile/Desktop HTML scrape ───────────────────────────────
   if (!hdUrl && !sdUrl) {
-    try {
-      const tokenRes = await axios.get('https://getfvid.com/', {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 8000
-      });
-
-      const $ = cheerio.load(tokenRes.data);
-      const token = $('input[name="_token"]').val() || $('input[name="token"]').val();
-
-      if (token) {
-        const dlRes = await axios.post(
-          'https://getfvid.com/downloader',
-          new URLSearchParams({ url, _token: token }).toString(),
-          {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'User-Agent': 'Mozilla/5.0',
-              'Referer': 'https://getfvid.com/'
-            },
-            timeout: 12000
-          }
-        );
-
-        const $dl = cheerio.load(dlRes.data);
-        const titleEl = $dl('h2, h3, .video-title, .title').first().text().trim();
-        if (titleEl) title = titleEl;
-
-        $dl('a[href]').each((_, el) => {
-          const href = $dl(el).attr('href') || '';
-          const text = $dl(el).text().toLowerCase();
-          if (href.includes('.mp4') || href.includes('fbcdn') || href.includes('video')) {
-            if ((text.includes('hd') || text.includes('high')) && !hdUrl) {
-              hdUrl = href;
-            } else if (!sdUrl) {
-              sdUrl = href;
-            }
-          }
+    for (const [ua, urlTransform] of [
+      ['Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
+        u => u.replace('www.facebook.com', 'm.facebook.com')],
+      ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        u => u]
+    ]) {
+      try {
+        const res = await axios.get(urlTransform(targetUrl), {
+          headers: { 'User-Agent': ua, 'Accept-Language': 'en-US,en;q=0.9' },
+          timeout: 10000
         });
+        const html = res.data.toString();
+        const $ = cheerio.load(html);
+        if (!title || title === 'Facebook Video') {
+          title = $('meta[property="og:title"]').attr('content') || $('title').text() || title;
+        }
+        if (!thumbnail) thumbnail = cleanJsonUrl($('meta[property="og:image"]').attr('content') || '');
 
-        const thumbEl = $dl('img[src*="fbcdn"], img.video-thumb, img[src*="thumb"]').first().attr('src');
-        if (thumbEl && !thumbnail) thumbnail = thumbEl;
+        const hdPats = [
+          /"playable_url_quality_hd"\s*:\s*"([^"]+)"/,
+          /"browser_native_hd_url"\s*:\s*"([^"]+)"/,
+          /"hd_src"\s*:\s*"([^"]+)"/
+        ];
+        const sdPats = [
+          /"playable_url"\s*:\s*"([^"]+)"/,
+          /"browser_native_sd_url"\s*:\s*"([^"]+)"/,
+          /"sd_src"\s*:\s*"([^"]+)"/
+        ];
+
+        for (const p of hdPats) { const m = html.match(p); if (m && m[1]) { hdUrl = cleanJsonUrl(m[1]); break; } }
+        for (const p of sdPats) { const m = html.match(p); if (m && m[1]) { sdUrl = cleanJsonUrl(p[1]); break; } }
+
+        if (hdUrl || sdUrl) { console.log('FB HTML scrape success'); break; }
+      } catch (e) {
+        console.warn('FB HTML scrape failed:', e.message);
       }
-    } catch (e) {
-      console.warn('getfvid failed:', e.message);
     }
   }
 
@@ -160,11 +157,7 @@ export async function extractFacebook(url) {
     platform: 'facebook',
     id: `fb_${Date.now()}`,
     title,
-    author: {
-      name: authorName,
-      username: '@facebook',
-      avatar: thumbnail
-    },
+    author: { name: authorName, username: '@facebook', avatar: thumbnail },
     thumbnail: thumbnail || 'https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=500&auto=format&fit=crop',
     duration: '01:15',
     durationSeconds: 75,
