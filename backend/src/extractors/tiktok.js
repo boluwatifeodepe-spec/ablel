@@ -1,16 +1,17 @@
 import axios from 'axios';
 import { ytDlpGetInfo, buildFormatsFromYtDlp } from './ytdlp.js';
 
+const RAPID_KEY = process.env.RAPIDAPI_KEY || '923ea47142mshdd695209df086cep1c5026jsn222823935579';
+
 /**
  * Extract TikTok video/audio without watermark
- * Primary: TikWM API (Fast, HD, No Watermark)
- * Secondary: yt-dlp
- * Tertiary: ssstik / oEmbed fallback
+ * 1. TikWM API (Fast, HD 1080p, No-Watermark + MP3 Audio)
+ * 2. RapidAPI TikTok Downloader
+ * 3. yt-dlp & oEmbed Fallback
  * @param {string} url 
  * @returns {Promise<Object>}
  */
 export async function extractTikTok(url) {
-  // Resolve share/redirect URLs (vt.tiktok.com, vm.tiktok.com, etc.)
   let targetUrl = url;
   if (url.includes('vt.tiktok.com') || url.includes('vm.tiktok.com') || url.includes('bit.ly')) {
     try {
@@ -53,7 +54,7 @@ export async function extractTikTok(url) {
       if (data.hdplay) {
         formats.push({
           id: 'video_hd',
-          label: 'HD PRO',
+          label: 'HD PRO (1080p)',
           quality: '1080p',
           type: 'video',
           ext: 'mp4',
@@ -67,7 +68,7 @@ export async function extractTikTok(url) {
       if (data.play) {
         formats.push({
           id: 'video_sd',
-          label: 'SD',
+          label: 'SD (720p)',
           quality: '720p',
           type: 'video',
           ext: 'mp4',
@@ -81,7 +82,7 @@ export async function extractTikTok(url) {
       if (data.music) {
         formats.push({
           id: 'audio_mp3',
-          label: 'Audio (MP3)',
+          label: 'Audio Only (MP3)',
           quality: 'Original',
           type: 'audio',
           ext: 'mp3',
@@ -118,7 +119,46 @@ export async function extractTikTok(url) {
     console.warn('TikWM TikTok failed:', error.message);
   }
 
-  // ── 2. SECONDARY: yt-dlp ───────────────────────────────────────────────────
+  // ── 2. SECONDARY: RapidAPI TikTok Endpoint ─────────────────────────────────
+  try {
+    const rapidRes = await axios.get(
+      `https://tiktok-downloader-download-tiktok-videos-without-watermark.p.rapidapi.com/index?url=${encodeURIComponent(targetUrl)}`,
+      {
+        headers: {
+          'x-rapidapi-key': RAPID_KEY,
+          'x-rapidapi-host': 'tiktok-downloader-download-tiktok-videos-without-watermark.p.rapidapi.com'
+        },
+        timeout: 10000
+      }
+    );
+    if (rapidRes.data && (rapidRes.data.video || rapidRes.data.url)) {
+      const vUrl = rapidRes.data.video || rapidRes.data.url;
+      const aUrl = rapidRes.data.music || rapidRes.data.audio || vUrl;
+      console.log('RapidAPI TikTok success');
+      return {
+        success: true,
+        platform: 'tiktok',
+        id: `tt_${Date.now()}`,
+        title: rapidRes.data.title || 'TikTok Video',
+        author: {
+          name: rapidRes.data.author || 'TikTok User',
+          username: '@tiktok',
+          avatar: rapidRes.data.cover || ''
+        },
+        thumbnail: rapidRes.data.cover || '',
+        duration: '00:30',
+        durationSeconds: 30,
+        formats: [
+          { id: 'video_hd', label: 'HD PRO (1080p)', quality: '1080p', type: 'video', ext: 'mp4', url: vUrl, hasAudio: true, noWatermark: true },
+          { id: 'audio_mp3', label: 'Audio Only (MP3)', quality: 'Original', type: 'audio', ext: 'mp3', url: aUrl, hasAudio: true, noWatermark: true }
+        ]
+      };
+    }
+  } catch (e) {
+    console.warn('RapidAPI TikTok failed:', e.message);
+  }
+
+  // ── 3. TERTIARY: yt-dlp ────────────────────────────────────────────────────
   try {
     const info = await ytDlpGetInfo(targetUrl);
     if (info) {
@@ -145,41 +185,6 @@ export async function extractTikTok(url) {
   } catch (e) {
     console.warn('yt-dlp TikTok failed:', e.message);
   }
-
-  // ── 3. TERTIARY: oEmbed Fallback ──────────────────────────────────────────
-  try {
-    const oembedRes = await axios.get(`https://www.tiktok.com/oembed?url=${encodeURIComponent(targetUrl)}`, {
-      timeout: 5000
-    });
-    if (oembedRes.data) {
-      return {
-        success: true,
-        platform: 'tiktok',
-        id: `tt_${Date.now()}`,
-        title: oembedRes.data.title || 'TikTok Video',
-        author: {
-          name: oembedRes.data.author_name || 'TikTok Creator',
-          username: oembedRes.data.author_unique_id ? `@${oembedRes.data.author_unique_id}` : '@tiktok',
-          avatar: ''
-        },
-        thumbnail: oembedRes.data.thumbnail_url || '',
-        duration: '00:30',
-        durationSeconds: 30,
-        formats: [
-          {
-            id: 'video_hd',
-            label: 'HD PRO (1080p)',
-            quality: '1080p',
-            type: 'video',
-            ext: 'mp4',
-            url: `https://www.tikwm.com/api/?url=${encodeURIComponent(targetUrl)}`,
-            hasAudio: true,
-            noWatermark: true
-          }
-        ]
-      };
-    }
-  } catch (e) { /* ignore */ }
 
   throw new Error('Could not extract direct TikTok video stream. Please verify the link is valid and public.');
 }

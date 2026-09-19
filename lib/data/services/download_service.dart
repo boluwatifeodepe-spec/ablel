@@ -10,7 +10,7 @@ import '../models/download_record.dart';
 import '../models/media_format.dart';
 import '../models/media_item.dart';
 
-typedef OnDownloadProgress = void Function(int receivedBytes, int totalBytes, double percent);
+typedef OnDownloadProgress = void Function(int receivedBytes, int totalBytes, double percent, String speedText);
 
 class DownloadService {
   final Dio _dio;
@@ -72,7 +72,7 @@ class DownloadService {
     return true;
   }
 
-  /// Download media format to disk with live progress and save thumbnail locally for offline cover display
+  /// Download media format to disk with live progress, download speed (MB/s), and save thumbnail locally
   Future<DownloadRecord> downloadMedia({
     required MediaItem item,
     required MediaFormat format,
@@ -90,9 +90,12 @@ class DownloadService {
     final filename = '${cleanTitle}_${DateTime.now().millisecondsSinceEpoch}.${format.ext}';
     final targetFilePath = p.join(directory.path, filename);
 
-    // Track download progress
     int lastReceived = 0;
     int knownTotal = format.filesize ?? 0;
+    final startTime = DateTime.now();
+    int lastSampleTime = startTime.millisecondsSinceEpoch;
+    int lastSampleBytes = 0;
+    String currentSpeed = '0.0 MB/s';
 
     try {
       await _dio.download(
@@ -110,7 +113,19 @@ class DownloadService {
           lastReceived = received;
           final effectiveTotal = total > 0 ? total : (knownTotal > 0 ? knownTotal : received);
           final progress = effectiveTotal > 0 ? (received / effectiveTotal).clamp(0.0, 1.0) : 0.0;
-          onProgress(received, effectiveTotal, progress);
+
+          // Calculate download speed in MB/s
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          final timeDiff = (nowMs - lastSampleTime) / 1000.0;
+          if (timeDiff >= 0.5) {
+            final bytesDiff = received - lastSampleBytes;
+            final mbps = (bytesDiff / (1024 * 1024)) / timeDiff;
+            currentSpeed = '${mbps.toStringAsFixed(1)} MB/s';
+            lastSampleTime = nowMs;
+            lastSampleBytes = received;
+          }
+
+          onProgress(received, effectiveTotal, progress, currentSpeed);
         },
       );
 
@@ -120,7 +135,7 @@ class DownloadService {
       }
 
       final finalSize = await file.length();
-      // Inspect initial bytes to ensure we did not download an HTML webpage (e.g. 403/Expired page)
+      // Requirement 10: NEVER save HTML as video file
       if (finalSize > 0) {
         final sampleBytes = await file.openRead(0, finalSize < 8192 ? finalSize : 8192).transform(const SystemEncoding().decoder).join('').catchError((_) => '');
         final lowerSample = sampleBytes.toLowerCase();
@@ -130,7 +145,7 @@ class DownloadService {
         }
       }
 
-      // Download and cache thumbnail locally so video cover ALWAYS renders in Library & Recent Downloads
+      // Download and cache thumbnail locally
       String localThumbnailPath = item.thumbnail;
       if (item.thumbnail.isNotEmpty && item.thumbnail.startsWith('http')) {
         try {
@@ -146,8 +161,7 @@ class DownloadService {
             options: Options(
               headers: {
                 'User-Agent':
-                    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-                'Referer': item.thumbnail.contains('tiktok') ? 'https://www.tiktok.com/' : 'https://www.instagram.com/',
+                    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15',
               },
               receiveTimeout: const Duration(seconds: 10),
             ),
@@ -155,9 +169,7 @@ class DownloadService {
           if (await thumbFile.exists() && await thumbFile.length() > 200) {
             localThumbnailPath = thumbFile.path;
           }
-        } catch (_) {
-          // Keep remote thumbnail URL if local caching fails
-        }
+        } catch (_) {}
       }
 
       // Export file to phone's public MediaStore / Gallery

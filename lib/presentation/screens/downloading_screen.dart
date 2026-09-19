@@ -86,6 +86,15 @@ class DownloadingScreen extends ConsumerWidget {
                       letterSpacing: 0.2,
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    downloadState.speedText,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.accentCyan,
+                    ),
+                  ),
                 ],
               ),
 

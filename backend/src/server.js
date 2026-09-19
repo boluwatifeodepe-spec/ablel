@@ -18,8 +18,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
+// Ping endpoint to keep Render server awake
+app.get('/ping', (req, res) => res.json({ status: 'alive' }));
+app.get('/api/ping', (req, res) => res.json({ status: 'alive' }));
+
 // Health check endpoint (for Railway, Render, uptime bots)
 app.get('/health', (req, res) => {
+
   res.json({
     status: 'ok',
     service: 'Able Media Extraction Backend',

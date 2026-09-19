@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/utils/platform_utils.dart';
 import '../models/media_format.dart';
@@ -186,159 +187,118 @@ class ClientExtractor {
       }
     } catch (_) {}
 
-    // TikTok oEmbed Fallback
+    // TikTok oEmbed Fallback (for metadata only)
     try {
       final oembed = await _dio.get(
         'https://www.tiktok.com/oembed?url=${Uri.encodeComponent(url)}',
         options: Options(receiveTimeout: const Duration(seconds: 6)),
       );
-      if (oembed.data is Map) {
-        final title = oembed.data['title']?.toString() ?? 'TikTok Video';
-        final author = oembed.data['author_name']?.toString() ?? 'TikTok Creator';
-        final thumb = oembed.data['thumbnail_url']?.toString() ?? '';
-
-        return MediaItem(
-          success: true,
-          id: 'tt_${DateTime.now().millisecondsSinceEpoch}',
-          title: Formatters.decodeHtmlEntities(title),
-          platform: SocialPlatform.tiktok,
-          author: MediaAuthor(name: Formatters.decodeHtmlEntities(author), username: '@tiktok', avatar: thumb),
-          thumbnail: thumb,
-          duration: '00:30',
-          durationSeconds: 30,
-          formats: [
-            MediaFormat(id: 'video_hd', label: 'HD PRO (1080p)', quality: '1080p', type: 'video', ext: 'mp4', url: url, hasAudio: true, noWatermark: true),
-            MediaFormat(id: 'video_sd', label: 'SD (720p)', quality: '720p', type: 'video', ext: 'mp4', url: url, hasAudio: true, noWatermark: true),
-            MediaFormat(id: 'audio_mp3', label: 'Audio (MP3)', quality: 'Original', type: 'audio', ext: 'mp3', url: url, hasAudio: true, noWatermark: true),
-          ],
-          originalUrl: url,
-        );
+      if (oembed.data is Map && oembed.data['thumbnail_url'] != null) {
+        // oEmbed confirmed link is valid, but no direct MP4 available on client-side
+        throw Exception('TikTok video stream requires server processing. Retrying...');
       }
-    } catch (_) {}
+    } catch (e) {
+      if (e is Exception && e.toString().contains('server processing')) rethrow;
+    }
 
     throw Exception('Could not extract TikTok video. Please ensure the link is valid and public.');
   }
 
   // ==========================================
-  // 2. YOUTUBE DIRECT EXTRACTOR
+  // 2. YOUTUBE DIRECT EXTRACTOR (youtube_explode_dart)
   // ==========================================
   static Future<MediaItem> _extractYouTube(String url) async {
-    final idMatch = RegExp(
-      r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|live\/|watch\?.+&v=))([\w-]{11})',
-    ).firstMatch(url);
-    final videoId = idMatch?.group(1);
-
-    if (videoId == null) {
-      throw Exception('Could not extract YouTube video ID from this URL.');
-    }
-
-    final ytThumbnail = 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
-    String title = 'YouTube Video';
-    String authorName = 'YouTube Creator';
-
-    // 1. Fetch metadata via official YouTube oEmbed API
+    final yt = YoutubeExplode();
     try {
-      final oembedRes = await _dio.get(
-        'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json',
-        options: Options(receiveTimeout: const Duration(seconds: 5)),
-      );
-      if (oembedRes.data is Map) {
-        title = oembedRes.data['title']?.toString() ?? title;
-        authorName = oembedRes.data['author_name']?.toString() ?? authorName;
-      }
-    } catch (_) {}
+      final video = await yt.videos.get(url);
+      final manifest = await yt.videos.streamsClient.getManifest(video.id);
 
-    // 2. Resolve direct playable MP4 stream via Invidious and Piped APIs
-    String streamUrl = '';
-    try {
-      final invRes = await _dio.get(
-        'https://y.com.sb/api/v1/videos/$videoId',
-        options: Options(receiveTimeout: const Duration(seconds: 5)),
-      );
-      if (invRes.data is Map && invRes.data['formatStreams'] is List) {
-        final streams = (invRes.data['formatStreams'] as List).cast<dynamic>();
-        final mp4s = streams
-            .whereType<Map<String, dynamic>>()
-            .where((s) => s['url'] != null && s['url'].toString().contains('googlevideo'))
-            .toList();
-        if (mp4s.isNotEmpty) {
-          streamUrl = mp4s[0]['url'].toString();
-        }
-      }
-    } catch (_) {}
+      final formats = <MediaFormat>[];
 
-    if (streamUrl.isEmpty) {
-      try {
-        final pipedRes = await _dio.get(
-          'https://api.piped.video/streams/$videoId',
-          options: Options(receiveTimeout: const Duration(seconds: 5)),
+      // Muxed streams (video + audio in single stream)
+      final muxedStreams = manifest.muxed.sortByVideoQuality();
+      for (final s in muxedStreams) {
+        final qLabel = '${s.videoQuality.name.replaceAll('p', '')}p';
+        formats.add(
+          MediaFormat(
+            id: 'video_${s.videoQuality.name}',
+            label: 'Video ($qLabel)',
+            quality: qLabel,
+            type: 'video',
+            ext: s.container.name,
+            url: s.url.toString(),
+            filesize: s.size.totalBytes > 0 ? s.size.totalBytes : null,
+            hasAudio: true,
+            noWatermark: true,
+          ),
         );
-        if (pipedRes.data is Map && pipedRes.data['videoStreams'] is List) {
-          final streams = (pipedRes.data['videoStreams'] as List).cast<dynamic>();
-          final mp4s = streams
-              .whereType<Map<String, dynamic>>()
-              .where((s) => s['format'] == 'MPEG_4' && s['url'] != null && s['videoOnly'] != true)
-              .toList();
-          if (mp4s.isNotEmpty) {
-            streamUrl = mp4s[0]['url'].toString();
-          }
+      }
+
+      // High quality video-only streams (e.g. 1080p, 720p)
+      final videoStreams = manifest.videoOnly.sortByVideoQuality();
+      for (final s in videoStreams) {
+        final qLabel = '${s.videoQuality.name.replaceAll('p', '')}p';
+        if (!formats.any((f) => f.quality == qLabel)) {
+          formats.add(
+            MediaFormat(
+              id: 'video_${s.videoQuality.name}',
+              label: 'Video ($qLabel)',
+              quality: qLabel,
+              type: 'video',
+              ext: s.container.name,
+              url: s.url.toString(),
+              filesize: s.size.totalBytes > 0 ? s.size.totalBytes : null,
+              hasAudio: true,
+              noWatermark: true,
+            ),
+          );
         }
-      } catch (_) {}
+      }
+
+      // Audio only stream
+      if (manifest.audioOnly.isNotEmpty) {
+        final audioStream = manifest.audioOnly.withHighestBitrate();
+        formats.add(
+          MediaFormat(
+            id: 'audio_mp3',
+            label: 'Audio Only (${audioStream.bitrate.kiloBitsPerSecond.round()}kbps)',
+            quality: 'Audio',
+            type: 'audio',
+            ext: 'mp3',
+            url: audioStream.url.toString(),
+            filesize: audioStream.size.totalBytes > 0 ? audioStream.size.totalBytes : null,
+            hasAudio: true,
+            noWatermark: true,
+          ),
+        );
+      }
+
+      yt.close();
+
+      if (formats.isEmpty) {
+        throw Exception('No playable video or audio streams found for this YouTube video.');
+      }
+
+      return MediaItem(
+        success: true,
+        id: video.id.value,
+        title: Formatters.decodeHtmlEntities(video.title),
+        platform: SocialPlatform.youtube,
+        author: MediaAuthor(
+          name: Formatters.decodeHtmlEntities(video.author),
+          username: '@${video.author.replaceAll(RegExp(r'\s+'), '').toLowerCase()}',
+          avatar: video.thumbnails.highResUrl,
+        ),
+        thumbnail: video.thumbnails.highResUrl,
+        duration: _formatDuration(video.duration?.inSeconds ?? 0),
+        durationSeconds: video.duration?.inSeconds ?? 0,
+        formats: formats,
+        originalUrl: url,
+      );
+    } catch (e) {
+      yt.close();
+      throw Exception('Could not extract YouTube video: ${e.toString().replaceFirst('Exception: ', '')}');
     }
-
-    if (streamUrl.isEmpty) {
-      throw Exception('Could not resolve direct YouTube video stream. Please ensure the video is public.');
-    }
-
-    final formats = <MediaFormat>[
-      MediaFormat(
-        id: 'video_hd',
-        label: 'HD PRO (1080p)',
-        quality: '1080p',
-        type: 'video',
-        ext: 'mp4',
-        url: streamUrl,
-        hasAudio: true,
-        noWatermark: true,
-      ),
-      MediaFormat(
-        id: 'video_sd',
-        label: 'SD (720p)',
-        quality: '720p',
-        type: 'video',
-        ext: 'mp4',
-        url: streamUrl,
-        hasAudio: true,
-        noWatermark: true,
-      ),
-      MediaFormat(
-        id: 'audio_mp3',
-        label: 'Audio Only (MP3)',
-        quality: '320kbps',
-        type: 'audio',
-        ext: 'mp3',
-        url: streamUrl,
-        hasAudio: true,
-        noWatermark: true,
-      ),
-    ];
-
-    return MediaItem(
-      success: true,
-      id: videoId,
-      title: Formatters.decodeHtmlEntities(title),
-      platform: SocialPlatform.youtube,
-      author: MediaAuthor(
-        name: Formatters.decodeHtmlEntities(authorName),
-        username: authorName.isNotEmpty ? '@${authorName.replaceAll(RegExp(r'\s+'), '').toLowerCase()}' : '@youtube',
-        avatar: ytThumbnail,
-      ),
-      thumbnail: ytThumbnail,
-      duration: '03:45',
-      durationSeconds: 225,
-      formats: formats,
-      originalUrl: url,
-    );
   }
 
   // ==========================================

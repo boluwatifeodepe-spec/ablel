@@ -15,6 +15,7 @@ class DownloadProgressState {
   final double progress; // 0.0 to 1.0
   final int receivedBytes;
   final int totalBytes;
+  final String speedText;
   final DownloadRecord? record;
   final String? errorMessage;
   final MediaItem? currentItem;
@@ -25,6 +26,7 @@ class DownloadProgressState {
     this.progress = 0.0,
     this.receivedBytes = 0,
     this.totalBytes = 0,
+    this.speedText = '0.0 MB/s',
     this.record,
     this.errorMessage,
     this.currentItem,
@@ -38,6 +40,7 @@ class DownloadProgressState {
     double? progress,
     int? receivedBytes,
     int? totalBytes,
+    String? speedText,
     DownloadRecord? record,
     String? errorMessage,
     MediaItem? currentItem,
@@ -48,6 +51,7 @@ class DownloadProgressState {
       progress: progress ?? this.progress,
       receivedBytes: receivedBytes ?? this.receivedBytes,
       totalBytes: totalBytes ?? this.totalBytes,
+      speedText: speedText ?? this.speedText,
       record: record ?? this.record,
       errorMessage: errorMessage ?? this.errorMessage,
       currentItem: currentItem ?? this.currentItem,
@@ -72,6 +76,7 @@ class DownloadNotifier extends StateNotifier<DownloadProgressState> {
       progress: 0.0,
       receivedBytes: 0,
       totalBytes: format.filesize ?? 0,
+      speedText: '0.0 MB/s',
       currentItem: item,
       currentFormat: format,
     );
@@ -89,11 +94,12 @@ class DownloadNotifier extends StateNotifier<DownloadProgressState> {
       final record = await _downloadService.downloadMedia(
         item: item,
         format: format,
-        onProgress: (received, total, progress) {
+        onProgress: (received, total, progress, speed) {
           state = state.copyWith(
             receivedBytes: received,
             totalBytes: total,
             progress: progress,
+            speedText: speed,
           );
         },
       );

@@ -207,7 +207,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       onPressed: isLoading ? null : _handlePasteAndAnalyze,
                       isLoading: isLoading,
                       icon: const Icon(Icons.content_paste_rounded, color: Colors.white, size: 18),
-                      text: 'Paste & Analyze',
+                      text: isLoading ? 'Connecting to server...' : 'Paste & Analyze',
                     ),
                   ],
                 ),
