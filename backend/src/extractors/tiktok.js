@@ -2,6 +2,7 @@ import axios from 'axios';
 import { ytDlpGetInfo, buildFormatsFromYtDlp } from './ytdlp.js';
 
 const RAPID_KEY = process.env.RAPIDAPI_KEY || '923ea47142mshdd695209df086cep1c5026jsn222823935579';
+const TIKWM_KEY = process.env.TIKWM_KEY || '067d2c2efaefe3af38a3a5f640a28b2d';
 
 /**
  * Extract TikTok video/audio without watermark
@@ -41,7 +42,8 @@ export async function extractTikTok(url) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           'Accept': 'application/json, text/javascript, */*; q=0.01',
           'Origin': 'https://www.tikwm.com',
-          'Referer': 'https://www.tikwm.com/'
+          'Referer': 'https://www.tikwm.com/',
+          'Authorization': `Bearer ${TIKWM_KEY}`
         },
         timeout: 12000
       }
