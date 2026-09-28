@@ -161,6 +161,10 @@ class ClientExtractor {
           final durationSeconds = data['duration'] is num ? (data['duration'] as num).toInt() : 0;
           String thumbnail = data['cover']?.toString() ?? data['origin_cover']?.toString() ?? '';
           if (thumbnail.startsWith('/')) thumbnail = 'https://www.tikwm.com$thumbnail';
+          // Ensure we have a fallback if tikwm thumbnail fails
+          if (thumbnail.isEmpty || !thumbnail.startsWith('http')) {
+             thumbnail = 'https://images.unsplash.com/photo-1611605698335-8b1569810432?w=500&auto=format&fit=crop';
+          }
 
           String avatar = data['author']?['avatar']?.toString() ?? '';
           if (avatar.startsWith('/')) avatar = 'https://www.tikwm.com$avatar';
@@ -210,7 +214,11 @@ class ClientExtractor {
   static Future<MediaItem> _extractYouTube(String url) async {
     final yt = YoutubeExplode();
     try {
-      final video = await yt.videos.get(url);
+      // Extract precise video ID to handle shorts and parameters correctly
+      final videoIdMatch = RegExp(r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/))([\w-]{11})').firstMatch(url);
+      final videoId = videoIdMatch != null ? videoIdMatch.group(1)! : url;
+      
+      final video = await yt.videos.get(videoId);
       final manifest = await yt.videos.streamsClient.getManifest(video.id);
 
       final formats = <MediaFormat>[];

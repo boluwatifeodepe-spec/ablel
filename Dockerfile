@@ -1,20 +1,18 @@
-FROM node:20-alpine
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy backend dependencies
-COPY backend/package*.json ./
+# Copy python dependencies
+COPY backend_py/requirements.txt ./
 
 # Install production dependencies
-RUN npm install --omit=dev
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source code
-COPY backend/ ./
+COPY backend_py/ ./
 
 ENV PORT=10000
-ENV NODE_ENV=production
-ENV YOUTUBE_ENABLED=true
 
 EXPOSE 10000
 
-CMD ["node", "src/server.js"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
